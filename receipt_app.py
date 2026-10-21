@@ -10,7 +10,6 @@ from PIL import Image
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-import google.generativeai as genai
 
 DATA_FILE = "receipts.json"
 UPLOAD_DIR = "receipt_uploads"
@@ -134,14 +133,11 @@ def match_vendor_master(store_name):
         pass
     return None
 
-def analyze_receipt_with_ai(file_path):
+def analyze_receipt_with_ai(file_path, model_name="gemini-3.8-flash"):
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
         return {"error": "Streamlit Secrets に GEMINI_API_KEY が設定されていません。"}
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        
         ext = os.path.splitext(file_path)[1].lower()
         if ext in [".png", ".jpg", ".jpeg"]:
             img = Image.open(file_path)
@@ -157,18 +153,41 @@ def analyze_receipt_with_ai(file_path):
             ```
             日付が特定できない場合は本日の日付、金額が不明な場合は 0 としてください。
             """
-            res = model.generate_content([prompt, img])
-            text = res.text
+            
+            # 新SDK（google-genai）での呼び出しを優先
+            try:
+                from google import genai
+                client = genai.Client(api_key=api_key)
+                res = client.models.generate_content(
+                    model=model_name,
+                    contents=[prompt, img]
+                )
+                text = res.text
+            except Exception:
+                import google.generativeai as legacy_genai
+                legacy_genai.configure(api_key=api_key)
+                model = legacy_genai.GenerativeModel(model_name)
+                res = model.generate_content([prompt, img])
+                text = res.text
+
             match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
                 return json.loads(match.group(0))
             return {"error": f"AIの応答形式が不正です: {text[:100]}"}
         else:
-            return {"error": f"PDFは現在画像変換または手動入力が必要です (拡張子: {ext})"}
+            return {"error": f"PDFは手動入力または画像変換が必要です (拡張子: {ext})"}
     except Exception as e:
-        return {"error": f"AI読取エラー: {str(e)}"}
+        return {"error": f"AI読取エラー ({model_name}): {str(e)}"}
 
 st.set_page_config(page_title="領収書整理 & 弥生会計ツール", page_icon="🧾", layout="wide")
+
+st.sidebar.header("⚙️ モデル設定")
+# 利用可能なモデル一覧
+model_choice = st.sidebar.selectbox(
+    "AI OCR モデル",
+    ["gemini-3.8-flash", "gemini-4-argon"],
+    index=0
+)
 
 st.sidebar.header("⚙️ フォルダ設定")
 custom_pool_dir = st.sidebar.text_input("一時フォルダのパス", value=DEFAULT_POOL_DIR)
@@ -203,11 +222,15 @@ with tab_pool:
         target_path = os.path.join(pool_dir, target_file)
         ext = os.path.splitext(target_file)[1].lower()
 
-        if "current_ai_result" not in st.session_state or st.session_state.get("current_file") != target_file:
-            with st.spinner("🤖 AIが領収書を自動読取中..."):
-                ai_res = analyze_receipt_with_ai(target_path)
+        # モデル変更やファイル切り替え時に再実行
+        if ("current_ai_result" not in st.session_state or 
+            st.session_state.get("current_file") != target_file or 
+            st.session_state.get("current_model") != model_choice):
+            with st.spinner(f"🤖 AI ({model_choice}) が領収書を解析中..."):
+                ai_res = analyze_receipt_with_ai(target_path, model_name=model_choice)
             st.session_state.current_ai_result = ai_res
             st.session_state.current_file = target_file
+            st.session_state.current_model = model_choice
 
         ai_data = st.session_state.current_ai_result or {}
 
@@ -244,7 +267,7 @@ with tab_pool:
             if "error" in ai_data:
                 st.warning(f"⚠️ {ai_data['error']}")
             elif ai_data.get("store"):
-                st.success("🤖 AIによる自動読み取りが完了しました。内容を確認して「登録」を押してください。")
+                st.success(f"🤖 AI ({model_choice}) による自動読み取り完了")
             with st.form("process_form", clear_on_submit=False):
                 st.subheader("内容を確認して登録")
                 rec_date = st.date_input("日付", value=def_date)
