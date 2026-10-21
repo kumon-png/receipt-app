@@ -6,20 +6,23 @@ import shutil
 import io
 import re
 from datetime import datetime, date
+from PIL import Image
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+import google.generativeai as genai
 
 DATA_FILE = "receipts.json"
 UPLOAD_DIR = "receipt_uploads"
 DEFAULT_POOL_DIR = "receipt_pool"
 SYNCED_FILE = "drive_synced.json"
 DEFAULT_DRIVE_URL = "https://drive.google.com/drive/u/0/folders/1qe7GekVPbaCabbxASZHBZffK0eqfHgP6"
+MASTER_FILE = "vendor_master.xlsx"
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 
-CATEGORIES = ["消耗品費", "旅費交通費", "通信費", "会議費", "交際費", "新聞図書費", "水道光熱費", "雑費", "その他"]
+CATEGORIES = ["消耗品費", "旅費交通費", "通信費", "会議費", "交際費", "新聞図書費", "水道光熱費", "仕入高", "雑費", "その他"]
 PAYMENT_METHODS = ["現金", "クレジットカード", "立替払（役員借入等）", "普通預金"]
 TAX_RATES = ["10%", "8%（軽減税率）", "対象外"]
 
@@ -50,7 +53,6 @@ def get_drive_service():
     elif "GOOGLE_TOKEN" in st.secrets:
         token_info = json.loads(st.secrets["GOOGLE_TOKEN"])
         creds = Credentials.from_authorized_user_info(token_info, scopes)
-    
     if creds:
         return build('drive', 'v3', credentials=creds)
     return None
@@ -64,18 +66,16 @@ def extract_folder_id(url):
 def sync_from_drive(folder_url, pool_dir):
     folder_id = extract_folder_id(folder_url)
     if not folder_id:
-        return False, "フォルダIDを抽出できません。URLを確認してください。"
+        return False, "フォルダIDが無効です。"
     service = get_drive_service()
     if not service:
-        return False, "認証情報が見つかりません。設定を確認してください。"
+        return False, "認証情報が見つかりません。"
 
     synced_ids = []
     if os.path.exists(SYNCED_FILE):
         try:
-            with open(SYNCED_FILE, "r") as f:
-                synced_ids = json.load(f)
-        except Exception:
-            synced_ids = []
+            with open(SYNCED_FILE, "r") as f: synced_ids = json.load(f)
+        except Exception: synced_ids = []
 
     try:
         query = f"'{folder_id}' in parents and trashed = false"
@@ -90,24 +90,81 @@ def sync_from_drive(folder_url, pool_dir):
 
         count = 0
         for item in items:
+            if item['name'] == MASTER_FILE:
+                req = service.files().get_media(fileId=item['id'], supportsAllDrives=True)
+                with io.FileIO(MASTER_FILE, 'wb') as fh:
+                    downloader = MediaIoBaseDownload(fh, req)
+                    done = False
+                    while not done: _, done = downloader.next_chunk()
+                continue
+
             if item['mimeType'] == 'application/vnd.google-apps.folder': continue
             if item['id'] in synced_ids: continue
             
-            request = service.files().get_media(fileId=item['id'], supportsAllDrives=True)
-            file_path = os.path.join(pool_dir, item['name'])
-            with io.FileIO(file_path, 'wb') as fh:
-                downloader = MediaIoBaseDownload(fh, request)
+            req = service.files().get_media(fileId=item['id'], supportsAllDrives=True)
+            with io.FileIO(os.path.join(pool_dir, item['name']), 'wb') as fh:
+                downloader = MediaIoBaseDownload(fh, req)
                 done = False
-                while not done:
-                    _, done = downloader.next_chunk()
+                while not done: _, done = downloader.next_chunk()
             synced_ids.append(item['id'])
             count += 1
 
-        with open(SYNCED_FILE, "w") as f:
-            json.dump(synced_ids, f)
-        return True, f"{count} 件の新しいファイルを取得しました！"
+        with open(SYNCED_FILE, "w") as f: json.dump(synced_ids, f)
+        return True, f"{count} 件の新規ファイルを取り込みました！"
     except Exception as e:
         return False, f"同期エラー: {str(e)}"
+
+def match_vendor_master(store_name):
+    if not os.path.exists(MASTER_FILE):
+        return None
+    try:
+        df_master = pd.read_excel(MASTER_FILE)
+        store_lower = store_name.lower()
+        for _, row in df_master.iterrows():
+            keywords = [k.strip().lower() for k in str(row.get("キーワード", "")).split(",") if k.strip()]
+            for kw in keywords:
+                if kw in store_lower:
+                    is_shii = str(row.get("区分", "")).strip() == "仕入"
+                    return {
+                        "category": row.get("勘定科目", "消耗品費"),
+                        "payment": row.get("決済手段", "クレジットカード"),
+                        "memo": "" if is_shii else str(row.get("定型メモ", "") if pd.notna(row.get("定型メモ")) else "")
+                    }
+    except Exception:
+        pass
+    return None
+
+def analyze_receipt_with_ai(file_path):
+    api_key = st.secrets.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext in [".png", ".jpg", ".jpeg"]:
+            img = Image.open(file_path)
+            prompt = """
+            領収書・レシート画像から次の情報を抽出し、必ず以下のJSON形式のみで回答してください。
+            ```json
+            {
+              "date": "YYYY-MM-DD",
+              "store": "店名・支払先",
+              "amount": 金額(数値のみ),
+              "tax_rate": "10%" または "8%（軽減税率）"
+            }
+            ```
+            日付が特定できない場合は本日の日付、金額が不明な場合は 0 としてください。
+            """
+            res = model.generate_content([prompt, img])
+            text = res.text
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+    except Exception:
+        pass
+    return None
 
 st.set_page_config(page_title="領収書整理 & 弥生会計ツール", page_icon="🧾", layout="wide")
 
@@ -115,9 +172,8 @@ st.sidebar.header("⚙️ フォルダ設定")
 custom_pool_dir = st.sidebar.text_input("一時フォルダのパス", value=DEFAULT_POOL_DIR)
 pool_dir = os.path.expanduser(custom_pool_dir.strip()) if custom_pool_dir.strip() else DEFAULT_POOL_DIR
 os.makedirs(pool_dir, exist_ok=True)
-st.sidebar.caption(f"現在の対象パス:\n`{pool_dir}`")
 
-st.title("🧾 領収書整理ツール（クラウド同期対応）")
+st.title("🧾 領収書整理ツール（AI自動読取 ＆ マスタ自動仕訳）")
 
 if "receipts" not in st.session_state:
     st.session_state.receipts = load_data()
@@ -126,28 +182,15 @@ tab_pool, tab_list = st.tabs(["📥 未処理プール（一括取り込み）",
 
 with tab_pool:
     with st.expander("☁️ Google ドライブから直接同期する", expanded=True):
-        st.write("設定フォルダから未処理ファイルをダウンロードします。")
         drive_url = st.text_input("Google ドライブのフォルダ URL", value=DEFAULT_DRIVE_URL)
         if st.button("🔄 ドライブから同期を実行", type="primary"):
-            if not drive_url:
-                st.warning("URLを入力してください。")
+            with st.spinner("Google ドライブと同期中..."):
+                ok, msg = sync_from_drive(drive_url, pool_dir)
+            if ok:
+                st.success(msg)
+                st.rerun()
             else:
-                with st.spinner("Google ドライブから取得中..."):
-                    success, msg = sync_from_drive(drive_url, pool_dir)
-                if success:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.error(msg)
-
-    with st.expander("📁 ローカルから手動追加", expanded=False):
-        uploaded_files = st.file_uploader("まとめてドロップ可能", type=["png", "jpg", "jpeg", "pdf"], accept_multiple_files=True)
-        if st.button("プールに手動保存") and uploaded_files:
-            for uf in uploaded_files:
-                with open(os.path.join(pool_dir, uf.name), "wb") as f:
-                    f.write(uf.getbuffer())
-            st.success(f"{len(uploaded_files)} 件保存しました！")
-            st.rerun()
+                st.error(msg)
 
     pooled_files = get_pooled_files(pool_dir)
     if not pooled_files:
@@ -157,6 +200,29 @@ with tab_pool:
         target_file = pooled_files[0]
         target_path = os.path.join(pool_dir, target_file)
         ext = os.path.splitext(target_file)[1].lower()
+
+        if "current_ai_result" not in st.session_state or st.session_state.get("current_file") != target_file:
+            with st.spinner("🤖 AIが領収書を自動読取中..."):
+                ai_res = analyze_receipt_with_ai(target_path)
+            st.session_state.current_ai_result = ai_res
+            st.session_state.current_file = target_file
+
+        ai_data = st.session_state.current_ai_result or {}
+
+        def_date = date.today()
+        if ai_data.get("date"):
+            try: def_date = datetime.strptime(ai_data["date"], "%Y-%m-%d").date()
+            except Exception: pass
+
+        def_store = ai_data.get("store", "")
+        def_amount = int(ai_data.get("amount", 0))
+        def_tax = ai_data.get("tax_rate", "10%")
+        if def_tax not in TAX_RATES: def_tax = "10%"
+
+        matched = match_vendor_master(def_store) if def_store else None
+        def_category = matched["category"] if matched else "消耗品費"
+        def_payment = matched["payment"] if matched else "クレジットカード"
+        def_memo = matched["memo"] if matched else ""
 
         c_view, c_form = st.columns([1, 1])
         with c_view:
@@ -169,22 +235,25 @@ with tab_pool:
                     st.download_button("PDFを開く/ダウンロード", f.read(), file_name=target_file)
             if st.button("このファイルをスキップして削除", key="discard_btn"):
                 os.remove(target_path)
+                st.session_state.pop("current_ai_result", None)
                 st.rerun()
 
         with c_form:
+            if ai_data:
+                st.success("🤖 AIによる自動読み取りが完了しました。内容を確認して「登録」を押してください。")
             with st.form("process_form", clear_on_submit=False):
-                st.subheader("内容を入力して登録")
-                rec_date = st.date_input("日付", value=date.today())
-                store = st.text_input("支払先 / 店舗名*", placeholder="例: セブンイレブン")
+                st.subheader("内容を確認して登録")
+                rec_date = st.date_input("日付", value=def_date)
+                store = st.text_input("支払先 / 店舗名*", value=def_store)
                 f1, f2 = st.columns(2)
                 with f1:
-                    category = st.selectbox("勘定科目", CATEGORIES)
-                    payment = st.selectbox("決済手段", PAYMENT_METHODS)
+                    category = st.selectbox("勘定科目", CATEGORIES, index=CATEGORIES.index(def_category) if def_category in CATEGORIES else 0)
+                    payment = st.selectbox("決済手段", PAYMENT_METHODS, index=PAYMENT_METHODS.index(def_payment) if def_payment in PAYMENT_METHODS else 1)
                 with f2:
-                    amount = st.number_input("金額 (税込・円)*", min_value=0, step=100, value=0)
-                    tax_rate = st.selectbox("税率", TAX_RATES)
-                memo = st.text_input("用途・メモ", placeholder="例: 事務用品購入")
-                submit = st.form_submit_button("✅ 登録して次へ", type="primary")
+                    amount = st.number_input("金額 (税込・円)*", min_value=0, step=100, value=def_amount)
+                    tax_rate = st.selectbox("税率", TAX_RATES, index=TAX_RATES.index(def_tax) if def_tax in TAX_RATES else 0)
+                memo = st.text_input("用途・メモ", value=def_memo)
+                submit = st.form_submit_button("✅ 登録して次へ（ワンクリック）", type="primary")
 
                 if submit:
                     if not store.strip() or amount <= 0:
@@ -206,6 +275,7 @@ with tab_pool:
                             "file": saved_name
                         })
                         save_data(st.session_state.receipts)
+                        st.session_state.pop("current_ai_result", None)
                         st.rerun()
 
 with tab_list:
