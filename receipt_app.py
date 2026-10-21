@@ -137,22 +137,22 @@ def match_vendor_master(store_name):
 def analyze_receipt_with_ai(file_path):
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
-        return None
+        return {"error": "Streamlit Secrets に GEMINI_API_KEY が設定されていません。"}
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         
         ext = os.path.splitext(file_path)[1].lower()
         if ext in [".png", ".jpg", ".jpeg"]:
             img = Image.open(file_path)
             prompt = """
-            領収書・レシート画像から次の情報を抽出し、必ず以下のJSON形式のみで回答してください。
+            領収書・レシート画像から次の情報を抽出し、必ず以下のJSON形式のみで回答してください。余計な解説は不要です。
             ```json
             {
               "date": "YYYY-MM-DD",
               "store": "店名・支払先",
-              "amount": 金額(数値のみ),
-              "tax_rate": "10%" または "8%（軽減税率）"
+              "amount": 1000,
+              "tax_rate": "10%"
             }
             ```
             日付が特定できない場合は本日の日付、金額が不明な場合は 0 としてください。
@@ -162,9 +162,11 @@ def analyze_receipt_with_ai(file_path):
             match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
                 return json.loads(match.group(0))
-    except Exception:
-        pass
-    return None
+            return {"error": f"AIの応答形式が不正です: {text[:100]}"}
+        else:
+            return {"error": f"PDFは現在画像変換または手動入力が必要です (拡張子: {ext})"}
+    except Exception as e:
+        return {"error": f"AI読取エラー: {str(e)}"}
 
 st.set_page_config(page_title="領収書整理 & 弥生会計ツール", page_icon="🧾", layout="wide")
 
@@ -228,7 +230,7 @@ with tab_pool:
         with c_view:
             st.caption(f"ファイル: `{target_file}`")
             if ext in [".png", ".jpg", ".jpeg"]:
-                st.image(target_path, use_container_width=True)
+                st.image(target_path, width="stretch")
             elif ext == ".pdf":
                 st.info("📄 PDFファイルです。")
                 with open(target_path, "rb") as f:
@@ -239,7 +241,9 @@ with tab_pool:
                 st.rerun()
 
         with c_form:
-            if ai_data:
+            if "error" in ai_data:
+                st.warning(f"⚠️ {ai_data['error']}")
+            elif ai_data.get("store"):
                 st.success("🤖 AIによる自動読み取りが完了しました。内容を確認して「登録」を押してください。")
             with st.form("process_form", clear_on_submit=False):
                 st.subheader("内容を確認して登録")
