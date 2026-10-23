@@ -7,7 +7,7 @@ import re
 from datetime import datetime, date
 from PIL import Image
 
-# pypdfの遅延安全インポート（未インストール時のクラッシュ防止）
+# pypdfの遅延安全インポート
 try:
     from pypdf import PdfReader
     HAS_PYPDF = True
@@ -19,7 +19,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ==========================================
-# 1. ユーザー定義（全員全操作可能）
+# 1. ユーザー定義
 # ==========================================
 USERS = {
     "kumon@9gates.info": {"name": "九門（代表）", "companies": ["ナインゲイツ", "シュガー", "SF企画"]},
@@ -122,7 +122,15 @@ COMPANY_CONFIG = {
         "fiscal_start": 8,
         "input_folder_id": "1BZrjf_kq_kNLsXoOOMfRxUKiJSydC5Qa",
         "output_folder_id": "1VuS4VHIPpNG8HPbARq4xkkDUdE_wN8U6",
-        "categories": ["① 旅費交通費・車両維持費", "② 会議費・接待交際費", "③ 通信費・IT・クラウド利用料", "④ 地代家賃・水道光熱費", "⑤ 調査研究費・消耗品費", "⑥ 支払手数料・租税公課", "開業費（繰延資産）"],
+        "categories": [
+            "⑤ 調査研究費・消耗品費",
+            "① 旅費交通費・車両維持費",
+            "② 会議費・接待交際費",
+            "③ 通信費・IT・クラウド利用料",
+            "④ 地代家賃・水道光熱費",
+            "⑥ 支払手数料・租税公課",
+            "開業費（繰延資産）"
+        ],
         "payments": [
             "普通預金（PayPay銀行 005-2423746）",
             "役員立替（PayPay個人 003-2060281）",
@@ -139,11 +147,12 @@ COMPANY_CONFIG = {
         },
         "keyword_rules": [
             (["google play", "googleplay", "app store", "apple"], "⑤ 調査研究費・消耗品費", "AnimaCast開発", "課対仕入10%"),
-            (["u-next", "unext", "netflix", "アマゾンプライム"], "⑤ 調査研究費・消耗品費", "ストリーミングUI研究", "課対仕入10%"),
-            (["square enix", "スクエニ", "ドラクエ", "任天堂", "steam"], "⑤ 調査研究費・消耗品費", "ゲーム内経済モデル研究", "課対仕入10%"),
-            (["google", "gcp", "サイボウズ", "クラウド", "ドメイン"], "③ 通信費・IT・クラウド利用料", "", "課対仕入10%"),
-            (["jr", "新幹線", "タクシー"], "① 旅費交通費・車両維持費", "", "課対仕入10%"),
-            (["特許", "弁理士", "司法書士", "振込手数料"], "⑥ 支払手数料・租税公課", "", "課対仕入10%")
+            (["u-next", "unext", "netflix", "ネットフリックス", "アマゾンプライム", "prime"], "⑤ 調査研究費・消耗品費", "ストリーミングUI研究", "課対仕入10%"),
+            (["square enix", "スクエニ", "ドラクエ", "任天堂", "nintendo", "steam", "プレイステーション"], "⑤ 調査研究費・消耗品費", "ゲーム内経済モデル研究", "課対仕入10%"),
+            (["アマゾン", "amazon", "ヨドバシ", "コーナン", "セリア"], "⑤ 調査研究費・消耗品費", "研究用消耗品", "課対仕入10%"),
+            (["google", "gcp", "サイボウズ", "クラウド", "ドメイン", "ドコモ", "docomo", "楽天モバイル"], "③ 通信費・IT・クラウド利用料", "", "課対仕入10%"),
+            (["jr", "新幹線", "タクシー", "リパーク", "repark", "タイムズ", "駐車場", "park"], "① 旅費交通費・車両維持費", "", "課対仕入10%"),
+            (["特許", "弁理士", "司法書士", "振込手数料", "手数料", "全厚済"], "⑥ 支払手数料・租税公課", "", "課対仕入10%")
         ]
     }
 }
@@ -155,16 +164,29 @@ MASTER_FILE = "vendor_master.xlsx"
 os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 
 # ==========================================
-# 4. Google Drive API 関数
+# 4. Google Drive API 関数（認証フェイルセーフ対応）
 # ==========================================
 def get_drive_service():
     scopes = ['[suspicious link removed]']
     creds = None
     if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', scopes)
+        try:
+            creds = Credentials.from_authorized_user_file('token.json', scopes)
+        except Exception:
+            creds = None
     elif "GOOGLE_TOKEN" in st.secrets:
-        token_info = json.loads(st.secrets["GOOGLE_TOKEN"])
-        creds = Credentials.from_authorized_user_info(token_info, scopes)
+        try:
+            token_info = json.loads(st.secrets["GOOGLE_TOKEN"])
+            creds = Credentials.from_authorized_user_info(token_info, scopes)
+        except Exception:
+            creds = None
+    elif "custom_google_token" in st.session_state and st.session_state.custom_google_token:
+        try:
+            token_info = json.loads(st.session_state.custom_google_token)
+            creds = Credentials.from_authorized_user_info(token_info, scopes)
+        except Exception:
+            creds = None
+
     if creds:
         return build('drive', 'v3', credentials=creds)
     return None
@@ -177,7 +199,7 @@ def get_pooled_files(target_dir):
 def sync_from_company_drive(folder_id, pool_dir):
     service = get_drive_service()
     if not service:
-        return False, "Google Drive認証情報が見つかりません。"
+        return False, "Google Drive API認証情報が設定されていません。"
     if not folder_id:
         return False, "1次フォルダIDが設定されていません。"
 
@@ -230,7 +252,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
     res = service.files().list(q=query, fields="files(id, name)", spaces='drive').execute()
     files = res.get('files', [])
     if files:
-        return files[0]['id']
+        return files['id']
     folder_metadata = {'name': target_month, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
     folder = service.files().create(body=folder_metadata, fields='id').execute()
     return folder.get('id')
@@ -250,16 +272,15 @@ def extract_month_from_filename_or_mtime(file_path):
     return datetime.fromtimestamp(mtime).strftime("%Y-%m")
 
 # ==========================================
-# 5. 明細パース（PDF ＆ CSV 安全両対応）
+# 5. 明細パース（PDF 摘要抽出 ＆ 自動科目分類強化）
 # ==========================================
 def parse_paypay_pdf(file_bytes, company_name):
-    """PayPay銀行 公式取引明細PDFから取引行を抽出"""
     if not HAS_PYPDF:
-        st.error("⚠️ サーバー環境に `pypdf` がインストールされていません。GitHubの requirements.txt に pypdf を追加してください。")
+        st.error("⚠️ サーバー環境に `pypdf` がインストールされていません。")
         return []
 
     conf = COMPANY_CONFIG[company_name]
-    default_pay = conf["payments"][0] if conf["payments"] else "普通預金"
+    default_pay = conf["payments"] if conf["payments"] else "普通預金"
     records = []
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
@@ -285,17 +306,20 @@ def parse_paypay_pdf(file_bytes, company_name):
                 tokens = line.split()
                 amounts = []
                 summary_tokens = []
+                
+                # トークンを走査して金額と摘要（店舗名・加盟店コード）を分離
                 for t in tokens:
                     num_clean = t.replace(",", "").replace("円", "")
                     if num_clean.isdigit() and len(num_clean) >= 2:
                         amounts.append(int(num_clean))
-                    elif not re.match(r'^\d{2}:\d{2}', t) and not date_pattern.match(t):
+                    elif not re.match(r'^\d{2}:\d{2}', t) and not date_pattern.match(t) and not re.match(r'^\d{5}$', t):
                         summary_tokens.append(t)
                 
                 amount = 0
-                summary = " ".join(summary_tokens)
+                summary = " ".join(summary_tokens).strip()
                 if amounts:
-                    amount = -amounts[0]
+                    # 最初の金額を出金（マイナス）として認識
+                    amount = -amounts
                 
                 if clean_date and amount != 0:
                     summary_lower = summary.lower()
@@ -305,30 +329,43 @@ def parse_paypay_pdf(file_bytes, company_name):
                     if company_name == "SF企画":
                         if any(k in summary_lower for k in ["google play", "app store", "apple"]):
                             auto_memo = "[研究日報] AnimaCast：課金API・決済UI検証"
-                        elif any(k in summary_lower for k in ["u-next", "netflix", "プライム"]):
+                        elif any(k in summary_lower for k in ["u-next", "netflix", "プライム", "prime"]):
                             auto_memo = "[研究日報] 映像配信UI/UXストリーミング検証"
-                        elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square"]):
+                        elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square", "プレイステーション"]):
                             auto_memo = "[研究日報] AnimaCast：ゲーム内経済循環調査"
 
-                    category = conf["categories"][0] if conf["categories"] else "雑費"
+                    # 初期科目の決定
+                    category = conf["categories"] if conf["categories"] else "雑費"
                     sub_account = ""
                     tax_type = "課対仕入10%"
 
+                    # 飲食判定
                     if is_dining:
-                        category = "交際費" if company_name != "SF企画" else "② 会議費・接待交際費"
+                        category = "② 会議費・接待交際費" if company_name == "SF企画" else "交際費"
 
+                    # キーワードルールによる自動科目決定
+                    matched_rule = False
                     for keywords, cat, sub_acc, t_type in conf.get("keyword_rules", []):
                         for kw in keywords:
                             if kw.lower() in summary_lower:
                                 category, sub_account, tax_type = cat, sub_acc, t_type
+                                matched_rule = True
                                 break
+                        if matched_rule:
+                            break
+
+                    # 摘要が空または判定不能時のフォールバック
+                    if not summary:
+                        summary = "PayPay銀行出入金"
+                        if company_name == "SF企画":
+                            category = "⑤ 調査研究費・消耗品費"
 
                     records.append({
                         "id": f"pdf_rec_{idx}",
                         "date": clean_date,
                         "month": month_str,
                         "amount": int(amount),
-                        "summary": summary if summary else "普通預金出入金",
+                        "summary": summary,
                         "category": category,
                         "sub_account": sub_account,
                         "tax_type": tax_type,
@@ -345,7 +382,7 @@ def parse_paypay_pdf(file_bytes, company_name):
 
 def parse_paypay_csv(file_bytes, company_name):
     conf = COMPANY_CONFIG[company_name]
-    default_pay = conf["payments"][0] if conf["payments"] else "普通預金"
+    default_pay = conf["payments"] if conf["payments"] else "普通預金"
     try:
         try:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding="utf-8")
@@ -405,23 +442,27 @@ def parse_paypay_csv(file_bytes, company_name):
                 if company_name == "SF企画":
                     if any(k in summary_lower for k in ["google play", "app store", "apple"]):
                         auto_memo = "[研究日報] AnimaCast：課金API・決済UI検証"
-                    elif any(k in summary_lower for k in ["u-next", "netflix", "プライム"]):
+                    elif any(k in summary_lower for k in ["u-next", "netflix", "プライム", "prime"]):
                         auto_memo = "[研究日報] 映像配信UI/UXストリーミング検証"
-                    elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square"]):
+                    elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square", "プレイステーション"]):
                         auto_memo = "[研究日報] AnimaCast：ゲーム内経済循環調査"
 
-                category = conf["categories"][0] if conf["categories"] else "雑費"
+                category = conf["categories"] if conf["categories"] else "雑費"
                 sub_account = ""
                 tax_type = "課対仕入10%"
 
                 if is_dining:
-                    category = "交際費" if company_name != "SF企画" else "② 会議費・接待交際費"
+                    category = "② 会議費・接待交際費" if company_name == "SF企画" else "交際費"
 
+                matched_rule = False
                 for keywords, cat, sub_acc, t_type in conf.get("keyword_rules", []):
                     for kw in keywords:
                         if kw.lower() in summary_lower:
                             category, sub_account, tax_type = cat, sub_acc, t_type
+                            matched_rule = True
                             break
+                    if matched_rule:
+                        break
 
                 clean_date = date_val[:10]
                 records.append({
@@ -445,13 +486,12 @@ def parse_paypay_csv(file_bytes, company_name):
 
 def generate_yayoi_csv_for_records(target_records, company_name):
     conf = COMPANY_CONFIG[company_name]
-    default_pay = conf["payments"][0] if conf["payments"] else "普通預金"
+    default_pay = conf["payments"] if conf["payments"] else "普通預金"
     lines = []
     for row in target_records:
         pay_method = row.get("payment", default_pay)
-        # 文字列であることを保証
         if isinstance(pay_method, list):
-            pay_method = pay_method[0] if len(pay_method) > 0 else default_pay
+            pay_method = pay_method if len(pay_method) > 0 else default_pay
             
         credit_subj, credit_sub = conf["payment_mapping"].get(pay_method, ("普通預金", ""))
         debit_subj = row.get("category", "外注費")
@@ -493,12 +533,19 @@ current_output_folder_id = company_conf["output_folder_id"]
 st.sidebar.markdown(f"**📂 1次読込フォルダID:**\n`{current_input_folder_id}`")
 st.sidebar.markdown(f"**📁 出力先親フォルダID:**\n`{current_output_folder_id}`")
 
-st.title("🏢 経理自動仕訳・消込・Drive月別保管")
+# Google Drive手動トークン設定枠（フェイルセーフ）
+with st.sidebar.expander("🔑 Google Drive API連携キー設定"):
+    custom_token = st.text_area("GOOGLE_TOKEN (JSON文字列)", value="", help="token.jsonの内容をそのまま貼り付けるとDrive連携が有効化されます。")
+    if custom_token:
+        st.session_state.custom_google_token = custom_token
+        st.success("APIキーを受領しました")
+
+st.title(f"🏢 経理自動仕訳・消込・Drive月別保管（{selected_company}）")
 
 # ------------------------------------------
 # ☁️ Google ドライブから領収書を同期する
 # ------------------------------------------
-with st.expander("☁️ Google ドライブから領収書を同期する", expanded=True):
+with st.expander("☁️ Google ドライブから領収書を同期する", expanded=False):
     st.markdown(f"**対象法人: `{selected_company}` の1次読込フォルダ**")
     st.info(f"[suspicious link removed]{current_input_folder_id}")
 
@@ -596,6 +643,9 @@ if st.session_state.get("transactions"):
                             st.success("✅ 税務メモを反映しました！")
                             st.rerun()
 
+    # ----------------------------------------------------
+    # 📋 月別自動仕訳プレビュー（個別科目手動変更対応）
+    # ----------------------------------------------------
     st.subheader("📋 月別自動仕訳プレビュー")
     preview_data = []
     for r in records:
@@ -617,6 +667,7 @@ if st.session_state.get("transactions"):
     st.markdown("---")
     st.subheader(f"📥 複数月一括：弥生仕訳CSV出力 ＆ ④ 各月Driveフォルダ自動配送")
 
+    # ダウンロードタブ（即座に手元へ保存可能）
     dl_tabs = st.tabs([f"📥 {m} 弥生CSV" for m in detected_months])
     for idx, m in enumerate(detected_months):
         with dl_tabs[idx]:
@@ -634,12 +685,13 @@ if st.session_state.get("transactions"):
                 key=f"dl_{m}"
             )
 
+    # Google Drive自動配送ボタン
     if st.button("📁 ④ 複数月のGoogle Driveフォルダへ一括自動配送・保存を実行", type="primary", use_container_width=True):
         service = get_drive_service()
         parent_id = current_output_folder_id
 
         if not service:
-            st.error("Google Drive API認証情報が見つかりません。")
+            st.warning("⚠️ Google Drive API認証情報が未設定です。左サイドバーの「🔑 Google Drive API連携キー設定」に認証トークンを入力するか、上のタブから弥生CSVを直接ダウンロードしてください。")
         else:
             with st.spinner(f"Google Drive（{selected_company}経理くんデータ）へ各月ごとに自動配送中..."):
                 try:
