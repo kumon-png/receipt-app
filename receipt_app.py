@@ -8,7 +8,6 @@ import re
 from datetime import datetime, date
 from PIL import Image
 
-# pypdfの遅延安全インポート
 try:
     from pypdf import PdfReader
     HAS_PYPDF = True
@@ -40,17 +39,60 @@ USERS = {
 }
 
 # ==========================================
-# 2. 飲食・会食検知用キーワード
+# 2. 九門グループ 3社合同 統合キーワード辞書データベース
 # ==========================================
-DINING_KEYWORDS = [
+# 飲食・会食キーワード（交際費 / 会議費）
+COMMON_DINING_KEYWORDS = [
     "蹄", "野武士", "エスカイヤ", "すし辰", "くら寿司", "スシロー", "なか一", 
     "アンデルセン", "ふるさと", "焼肉", "寿司", "居酒屋", "バル", "カフェ", 
     "珈琲", "レストラン", "割烹", "料理", "酒場", "スターバックス", "ドトール", 
-    "バー", "bar", "はき溜め", "はき駄め", "スタンドクラブ", "餃子家龍"
+    "バー", "bar", "はき溜め", "はき駄め", "スタンドクラブ", "餃子家龍", "鳥貴族"
 ]
 
+# 3社合同・統合仕訳ルール（どの法人でも共通して適用されるナレッジベース）
+GROUP_UNIFIED_KEYWORD_RULES = [
+    # 1. 研究開発・コンテンツ検証・ゲーム経済（AnimaCast Core IP）
+    (["スクウェア", "スクエニ", "ｽｸｳｴｱ", "square enix", "ドラクエ", "任天堂", "nintendo", "steam", "プレイステーション", "ps store"], 
+     "調査研究費", "⑤ 調査研究費・消耗品費", "課対仕入10%", "[研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"),
+    (["google play", "app store", "apple"], 
+     "調査研究費", "⑤ 調査研究費・消耗品費", "課対仕入10%", "[研究日報] AnimaCast：アプリ課金API・決済UI検証"),
+    (["u-next", "netflix", "プライム", "prime"], 
+     "調査研究費", "⑤ 調査研究費・消耗品費", "課対仕入10%", "[研究日報] 映像配信UI/UXストリーミング検証"),
+
+    # 2. IT・通信・クラウド
+    (["サイボウズ", "cybozu", "adobe", "ドコモ", "docomo", "マイクロソフト", "gcp", "google", "楽天モバイル", "ドメイン"], 
+     "通信費", "③ 通信費・IT・クラウド利用料", "課対仕入10%", ""),
+
+    # 3. 旅費交通費・宿泊・移動
+    (["jr", "新幹線", "タクシー", "楽天トラベル", "ホテル", "リパーク", "タイムズ", "駐車場", "park", "瀬戸内海汽船", "汽船"], 
+     "旅費交通費", "① 旅費交通費・車両維持費", "課対仕入10%", ""),
+
+    # 4. 車両維持・燃料
+    (["キユウユダイ", "給油", "eneos", "ホウジンetc", "etc", "高速情報協同組合"], 
+     "車両費", "① 旅費交通費・車両維持費", "課対仕入10%", ""),
+
+    # 5. 消耗品・工具・備品
+    (["アマゾン", "amazon", "コーナン", "kohnan", "セリア", "ヨドバシ", "モノタロウ", "monotaro", "建デポ", "kendepo", "ニトリ", "nitori"], 
+     "消耗品費", "⑤ 調査研究費・消耗品費", "課対仕入10%", ""),
+
+    # 6. 店舗飲食・食材仕入（シュガー等）
+    (["wannaeat", "ワナイート", "a-price", "食材"], 
+     "仕入高（8%軽）", "仕入高（8%軽）", "課対仕入8%(軽)", ""),
+
+    # 7. 外注・専門工事（施工パートナー）
+    (["ケーティーエス", "kts", "鳥取通信", "ベッセル", "エルワイコンサル", "アイデン", "ミカモ電気", "アルテック", "awc"], 
+     "外注費", "外注費", "課対仕入10%", ""),
+
+    # 8. 手数料・公課・顧問料
+    (["振込手数料", "手数料", "全厚済", "弁理士", "司法書士", "税理士"], 
+     "支払手数料", "⑥ 支払手数料・租税公課", "課対仕入10%", "")
+]
+
+# 入金専用科目
+INCOME_CATEGORIES = ["売上高", "売掛金", "雑収入", "短期借入金（代表立替戻入）", "預り金"]
+
 # ==========================================
-# 3. 各法人設定・口座マスタ（支店番号-口座番号完全連動）
+# 3. 法人別 会計基本マスタ
 # ==========================================
 COMPANY_CONFIG = {
     "ナインゲイツ": {
@@ -58,19 +100,11 @@ COMPANY_CONFIG = {
         "fiscal_start": 4,
         "input_folder_id": "1upG2C-m-An3VcI1ULE7A6BwHipRzIjge",
         "output_folder_id": "1xtj1g42RSwOa_eUATF89qLdS_JiM_yQ8",
-        "categories": [
+        "default_payment": "普通預金（PayPay銀行 005-1744850）",
+        "expense_categories": [
             "外注費", "仕入高", "仕入高（8%軽）", "旅費交通費", "消耗品費", 
             "車両費", "通信費", "会議費", "交際費", "地代家賃", 
             "水道光熱費", "支払手数料", "法定福利費", "福利厚生費", "雑費"
-        ],
-        "payments": [
-            "普通預金（PayPay銀行 005-1744850）",
-            "普通預金（広島市信用組合 117-0878359-0）",
-            "普通預金（呉信用金庫 020-1096121）",
-            "役員立替（PayPay個人 003-2060281）",
-            "役員立替（楽天個人 214-4383608）",
-            "クレジットカード（未払金）",
-            "現金"
         ],
         "payment_mapping": {
             "普通預金（PayPay銀行 005-1744850）": ("普通預金", "PayPay銀行(1744850)"),
@@ -80,36 +114,17 @@ COMPANY_CONFIG = {
             "役員立替（楽天個人 214-4383608）": ("役員借入金", "九門久士(楽天)"),
             "クレジットカード（未払金）": ("未払金", "カード"),
             "現金": ("現金", ""),
-        },
-        "keyword_rules": [
-            (["はき溜め", "はき駄め", "蹄", "エスカイヤ", "野武士", "ふるさと"], "交際費", "", "課対仕入10%"),
-            (["ケーティーエス", "kts", "鳥取通信", "ベッセル", "エルワイコンサル", "アイデン", "ミカモ電気", "アルテック"], "外注費", "", "課対仕入10%"),
-            (["シュガー", "sugar"], "外注費", "合同会社シュガー", "課対仕入10%"),
-            (["サイボウズ", "cybozu", "adobe", "ドコモ", "docomo", "マイクロソフト", "gcp", "google"], "通信費", "", "課対仕入10%"),
-            (["キユウユダイ", "給油", "eneos", "ホウジンetc", "etc", "高速情報協同組合"], "車両費", "", "課対仕入10%"),
-            (["jr", "新幹線", "タクシー", "楽天トラベル", "ホテル", "リパーク", "タイムズ", "駐車場", "park"], "旅費交通費", "", "課対仕入10%"),
-            (["アマゾン", "amazon", "コーナン", "kohnan", "セリア", "ヨドバシ"], "消耗品費", "", "課対仕入10%"),
-            (["振込手数料", "手数料", "全厚済"], "支払手数料", "", "課対仕入10%")
-        ]
+        }
     },
     "シュガー": {
         "code": "sugar",
         "fiscal_start": 6,
         "input_folder_id": "1qo5FqrpHDFgY4tzf32YaYbFQB6wCQ9Ih",
         "output_folder_id": "19HhywRqfSRG2tWMVzDkcw6DlmCMGLgSI",
-        "categories": [
+        "default_payment": "普通預金（PayPay銀行 005-5332515）",
+        "expense_categories": [
             "外注費", "仕入高（8%軽）", "仕入高（10%）", "地代家賃", "旅費交通費", 
             "消耗品費", "支払手数料", "荷造運賃", "リース料", "雑費", "開業費"
-        ],
-        "payments": [
-            "普通預金（PayPay銀行 005-5332515）",
-            "普通預金（PayPay法人 005-5332523）",
-            "普通預金（呉信用金庫 020-1096139）",
-            "普通預金（広島市信用組合 117-0878367）",
-            "役員立替（PayPay個人 003-2060281）",
-            "役員立替（楽天個人 214-4383608）",
-            "クレジットカード（未払金）",
-            "現金"
         ],
         "payment_mapping": {
             "普通預金（PayPay銀行 005-5332515）": ("普通預金", "PayPay銀行(5332515)"),
@@ -127,7 +142,8 @@ COMPANY_CONFIG = {
         "fiscal_start": 8,
         "input_folder_id": "1BZrjf_kq_kNLsXoOOMfRxUKiJSydC5Qa",
         "output_folder_id": "1VuS4VHIPpNG8HPbARq4xkkDUdE_wN8U6",
-        "categories": [
+        "default_payment": "普通預金（PayPay銀行 005-2423746）",
+        "expense_categories": [
             "⑤ 調査研究費・消耗品費",
             "① 旅費交通費・車両維持費",
             "② 会議費・接待交際費",
@@ -135,13 +151,6 @@ COMPANY_CONFIG = {
             "④ 地代家賃・水道光熱費",
             "⑥ 支払手数料・租税公課",
             "開業費（繰延資産）"
-        ],
-        "payments": [
-            "普通預金（PayPay銀行 005-2423746）",
-            "役員立替（PayPay個人 003-2060281）",
-            "役員立替（楽天個人 214-4383608）",
-            "クレジットカード（未払金）",
-            "現金"
         ],
         "payment_mapping": {
             "普通預金（PayPay銀行 005-2423746）": ("普通預金", "PayPay銀行(2423746)"),
@@ -156,8 +165,6 @@ COMPANY_CONFIG = {
 BASE_UPLOAD_DIR = "receipt_uploads"
 DEFAULT_POOL_DIR = "receipt_pool"
 SYNCED_FILE = "drive_synced.json"
-MASTER_FILE = "vendor_master.xlsx"
-
 os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
 
@@ -211,14 +218,6 @@ def sync_from_company_drive(folder_id, pool_dir):
 
         count = 0
         for item in items:
-            if item['name'] == MASTER_FILE:
-                req = service.files().get_media(fileId=item['id'], supportsAllDrives=True)
-                with io.FileIO(MASTER_FILE, 'wb') as fh:
-                    downloader = MediaIoBaseDownload(fh, req)
-                    done = False
-                    while not done: _, done = downloader.next_chunk()
-                continue
-
             if item['mimeType'] == 'application/vnd.google-apps.folder': continue
             if item['id'] in synced_ids: continue
 
@@ -236,28 +235,73 @@ def sync_from_company_drive(folder_id, pool_dir):
     except Exception as e:
         return False, f"同期エラー: {str(e)}"
 
+def get_or_create_monthly_folder(service, parent_folder_id, target_month):
+    query = f"'{parent_folder_id}' in parents and name = '{target_month}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    res = service.files().list(q=query, fields="files(id, name)", spaces='drive').execute()
+    files = res.get('files', [])
+    if files: return files['id']
+    folder_metadata = {'name': target_month, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
+    folder = service.files().create(body=folder_metadata, fields='id').execute()
+    return folder.get('id')
+
+def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
+    file_metadata = {'name': file_name, 'parents': [folder_id]}
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
+    return service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+
 # ==========================================
-# 5. PayPay銀行明細パース（PDF ＆ CSV 超耐障害性エンジン）
+# 5. 3社合同マスタによる口座明細自動分類エンジン
 # ==========================================
-def parse_paypay_pdf_3companies(file_bytes):
-    """PayPay銀行PDF明細（NBG2306...2pnhFU.pdf等）の高度パーサー"""
+def match_unified_category(summary_text, target_company, is_income):
+    """3社合同の統合ナレッジマスタから最適な勘定科目をマッチング"""
+    summary_lower = summary_text.lower()
+    comp_conf = COMPANY_CONFIG[target_company]
+    is_sf = (target_company == "SF企画")
+
+    if is_income:
+        if "利息" in summary_lower:
+            return "受取利息", "", "非課売上", True, ""
+        return "売上高", "", "課税売上10%", True, ""
+
+    # 会食・飲食判定
+    if any(k.lower() in summary_lower for k in COMMON_DINING_KEYWORDS):
+        cat = "② 会議費・接待交際費" if is_sf else "交際費"
+        return cat, "", "課対仕入10%", True, ""
+
+    # 合同キーワード辞書ループ
+    for keywords, standard_cat, sf_cat, tax_type, memo in GROUP_UNIFIED_KEYWORD_RULES:
+        for kw in keywords:
+            if kw.lower() in summary_lower:
+                chosen_cat = sf_cat if is_sf else standard_cat
+                # 該当法人の科目体系に存在するか安全確認
+                if chosen_cat not in comp_conf["expense_categories"]:
+                    # 近似またはデフォルトへ
+                    if is_sf:
+                        chosen_cat = "⑤ 調査研究費・消耗品費"
+                    else:
+                        chosen_cat = safe_first_str(comp_conf["expense_categories"], "雑費")
+                return chosen_cat, "", tax_type, True, memo
+
+    # デフォルト
+    default_cat = comp_conf["expense_categories"][-1] # 雑費
+    return default_cat, "", "課対仕入10%", False, ""
+
+def parse_paypay_pdf_unified(file_bytes, target_company):
     if not HAS_PYPDF:
         st.error("⚠️ サーバー環境に `pypdf` がインストールされていません。")
         return []
 
-    base_conf = COMPANY_CONFIG["ナインゲイツ"]
-    default_pay = safe_first_str(base_conf["payments"], "普通預金")
     records = []
+    comp_conf = COMPANY_CONFIG[target_company]
+    default_pay = comp_conf["default_payment"]
 
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
         raw_text = ""
         for page in reader.pages:
             t = page.extract_text()
-            if t:
-                raw_text += t + "\n"
+            if t: raw_text += t + "\n"
 
-        # カンマ後の空白を正規化（例: "793, 800" -> "793,800"）
         cleaned_text = re.sub(r'(\d+),\s+(\d+)', r'\1,\2', raw_text)
         lines = [l.strip() for l in cleaned_text.split("\n") if l.strip()]
 
@@ -265,102 +309,77 @@ def parse_paypay_pdf_3companies(file_bytes):
         date_finder = re.compile(r'(202\d)[/-](\d{1,2})[/-](\d{1,2})')
 
         for line in lines:
-            # 日付を含む行を検出
             m = date_finder.search(line)
             if m:
-                year = m.group(1)
-                month = m.group(2).zfill(2)
-                day = m.group(3).zfill(2)
+                year, month, day = m.group(1), m.group(2).zfill(2), m.group(3).zfill(2)
                 clean_date = f"{year}-{month}-{day}"
                 month_str = f"{year}-{month}"
 
-                # 日付以外のトークンを精査
                 sub_line = date_finder.sub('', line).strip()
                 tokens = sub_line.split()
 
-                amounts = []
-                summary_tokens = []
-
+                amounts, summary_tokens = [], []
                 for t in tokens:
                     num_str = t.replace(",", "").replace("円", "")
-                    # 時刻（15:46:48等）や取引連番（00001等）を除外して金額を抽出
-                    if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', t):
-                        continue
-                    if re.match(r'^0000\d$', t):
-                        continue
+                    if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', t): continue
+                    if re.match(r'^0000\d$', t): continue
                     if num_str.isdigit() and len(num_str) >= 2:
                         amounts.append(int(num_str))
                     else:
                         summary_tokens.append(t)
 
                 if amounts:
-                    # 出金額または入金額を認識（先頭の数値を取引金額とする）
-                    amount = -amounts
                     summary = " ".join(summary_tokens).strip()
-
-                    # Vデビット加盟店コードや店舗名クレンジング
                     summary = re.sub(r'^[\|\s]+', '', summary)
                     summary = re.sub(r'[\|\s]+$', '', summary)
-                    if not summary:
-                        summary = "PayPay銀行普通預金出入金"
-
                     summary_lower = summary.lower()
-                    is_dining = any(k.lower() in summary_lower for k in DINING_KEYWORDS)
 
-                    # ナインゲイツ基準の初期分類
-                    category = "雑費"
-                    sub_account = ""
-                    tax_type = "課対仕入10%"
-                    is_auto_matched = False
+                    # 入出金判定
+                    is_income = False
+                    if len(amounts) >= 2 and amounts == amounts[1]:
+                        is_income = True
+                        amount = amounts
+                    elif any(k in summary_lower for k in ["振込", "お利息", "利息", "入金"]):
+                        is_income = True
+                        amount = amounts
+                    else:
+                        is_income = False
+                        amount = -amounts
 
-                    if is_dining:
-                        category = "交際費"
-                        is_auto_matched = True
+                    if not summary:
+                        summary = "PayPay銀行入金" if is_income else "PayPay銀行出金"
 
-                    for keywords, cat, sub_acc, t_type in base_conf.get("keyword_rules", []):
-                        for kw in keywords:
-                            if kw.lower() in summary_lower:
-                                category = cat
-                                sub_account = sub_acc
-                                tax_type = t_type
-                                is_auto_matched = True
-                                break
-                        if is_auto_matched:
-                            break
+                    category, sub_acc, tax_type, is_matched, memo = match_unified_category(summary, target_company, is_income)
 
                     records.append({
-                        "id": f"pdf_rec_{idx}",
+                        "id": f"rec_{idx}",
                         "date": clean_date,
                         "month": month_str,
                         "amount": int(amount),
+                        "is_income": is_income,
                         "summary": summary,
-                        "company": "ナインゲイツ",
                         "category": category,
-                        "sub_account": sub_account,
+                        "sub_account": sub_acc,
                         "tax_type": tax_type,
                         "payment": default_pay,
-                        "is_dining": is_dining,
-                        "is_auto_matched": is_auto_matched,
+                        "is_dining": any(k.lower() in summary_lower for k in COMMON_DINING_KEYWORDS),
+                        "is_auto_matched": is_matched,
                         "dining_info": None,
-                        "research_memo": ""
+                        "research_memo": memo
                     })
                     idx += 1
-
         return records
     except Exception as e:
         st.error(f"PayPay銀行PDF明細の解析エラー: {e}")
         return []
 
-def parse_paypay_csv_3companies(file_bytes):
-    """PayPay銀行公式CSV（Shift-JIS / UTF-8 両対応）のパーサー"""
-    base_conf = COMPANY_CONFIG["ナインゲイツ"]
-    default_pay = safe_first_str(base_conf["payments"], "普通預金")
+def parse_paypay_csv_unified(file_bytes, target_company):
+    comp_conf = COMPANY_CONFIG[target_company]
+    default_pay = comp_conf["default_payment"]
 
     try:
-        try:
-            df = pd.read_csv(io.BytesIO(file_bytes), encoding="utf-8")
-        except Exception:
-            df = pd.read_csv(io.BytesIO(file_bytes), encoding="shift_jis")
+        try: df = pd.read_csv(io.BytesIO(file_bytes), encoding="utf-8")
+        except Exception: df = pd.read_csv(io.BytesIO(file_bytes), encoding="shift_jis")
 
         df.columns = [str(c).strip() for c in df.columns]
         records = []
@@ -382,13 +401,11 @@ def parse_paypay_csv_3companies(file_bytes):
                         date_val = row_dict[c].replace("/", "-")[:10]
                         break
 
-            out_amt = "0"
+            out_amt, in_amt = "0", "0"
             for out_col in ["お支払金額", "出金金額(円)", "出金額", "出金"]:
                 if out_col in row_dict and row_dict[out_col] != "nan" and row_dict[out_col].strip():
                     out_amt = row_dict[out_col]
                     break
-
-            in_amt = "0"
             for in_col in ["お預り金額", "入金金額(円)", "入金額", "入金"]:
                 if in_col in row_dict and row_dict[in_col] != "nan" and row_dict[in_col].strip():
                     in_amt = row_dict[in_col]
@@ -397,9 +414,11 @@ def parse_paypay_csv_3companies(file_bytes):
             try:
                 out_val = float(str(out_amt).replace(",", "").replace("円", "")) if out_amt != "nan" else 0
                 in_val = float(str(in_amt).replace(",", "").replace("円", "")) if in_amt != "nan" else 0
-                amount = in_val if in_val > 0 else -out_val
             except Exception:
-                amount = 0
+                out_val, in_val = 0, 0
+
+            is_income = in_val > 0
+            amount = in_val if is_income else -out_val
 
             summary = ""
             for c in ["摘要", "お取引内容", "取引内容", "振込人名", "支払先"]:
@@ -408,45 +427,24 @@ def parse_paypay_csv_3companies(file_bytes):
                     break
 
             if date_val and amount != 0:
-                summary_lower = summary.lower()
-                is_dining = any(k.lower() in summary_lower for k in DINING_KEYWORDS)
-
-                category = "雑費"
-                sub_account = ""
-                tax_type = "課対仕入10%"
-                is_auto_matched = False
-
-                if is_dining:
-                    category = "交際費"
-                    is_auto_matched = True
-
-                for keywords, cat, sub_acc, t_type in base_conf.get("keyword_rules", []):
-                    for kw in keywords:
-                        if kw.lower() in summary_lower:
-                            category = cat
-                            sub_account = sub_acc
-                            tax_type = t_type
-                            is_auto_matched = True
-                            break
-                    if is_auto_matched:
-                        break
-
                 clean_date = date_val[:10]
+                category, sub_acc, tax_type, is_matched, memo = match_unified_category(summary, target_company, is_income)
+
                 records.append({
                     "id": f"csv_rec_{idx}",
                     "date": clean_date,
                     "month": clean_date[:7],
                     "amount": int(amount),
+                    "is_income": is_income,
                     "summary": summary,
-                    "company": "ナインゲイツ",
                     "category": category,
-                    "sub_account": sub_account,
+                    "sub_account": sub_acc,
                     "tax_type": tax_type,
                     "payment": default_pay,
-                    "is_dining": is_dining,
-                    "is_auto_matched": is_auto_matched,
+                    "is_dining": any(k.lower() in summary.lower() for k in COMMON_DINING_KEYWORDS),
+                    "is_auto_matched": is_matched,
                     "dining_info": None,
-                    "research_memo": ""
+                    "research_memo": memo
                 })
 
         return records
@@ -456,33 +454,43 @@ def parse_paypay_csv_3companies(file_bytes):
 
 def generate_yayoi_csv_for_records(target_records, company_name):
     conf = COMPANY_CONFIG[company_name]
-    default_pay = safe_first_str(conf["payments"], "普通預金")
+    default_pay = conf["default_payment"]
     lines = []
+
     for row in target_records:
         raw_pay = row.get("payment", default_pay)
         pay_method = safe_first_str(raw_pay, default_pay)
-        credit_subj, credit_sub = conf["payment_mapping"].get(pay_method, ("普通預金", ""))
+        bank_subj, bank_sub = conf["payment_mapping"].get(pay_method, ("普通預金", ""))
 
-        raw_cat = row.get("category", "外注費")
-        debit_subj = safe_first_str(raw_cat, "外注費")
-        debit_sub = safe_first_str(row.get("sub_account", ""))
+        target_subj = safe_first_str(row.get("category", "外注費"))
+        target_sub = safe_first_str(row.get("sub_account", ""))
         tax_type = safe_first_str(row.get("tax_type", "課対仕入10%"))
         amount = str(abs(row.get("amount", 0)))
         date_str = str(row.get("date", "")).replace("-", "/")
 
         base_summary = safe_first_str(row.get('summary', ''))
         memo_parts = []
-        if row.get('research_memo'):
-            memo_parts.append(str(row['research_memo']))
+        if row.get('research_memo'): memo_parts.append(str(row['research_memo']))
         if row.get('dining_info'):
             d = row['dining_info']
             memo_parts.append(f"[{d['judged_cat']}] {d['partner']} ({d['people']}名/単価¥{d['unit_price']:,}) 目的:{d['purpose']}")
 
         summary_text = f"{base_summary} {' '.join(memo_parts)}".strip()
-        cols = [
-            "2000", "", "", date_str, debit_subj, debit_sub, "全社", tax_type, amount, "0",
-            credit_subj, credit_sub, "全社", "対象外", amount, "0", summary_text, "", "", "NO"
-        ]
+
+        # 入金取引 vs 出金取引の貸借振り分け
+        if row.get("is_income", False):
+            # 借方：預金 / 貸方：売上科目
+            cols = [
+                "2000", "", "", date_str, bank_subj, bank_sub, "全社", "対象外", amount, "0",
+                target_subj, target_sub, "全社", tax_type, amount, "0", summary_text, "", "", "NO"
+            ]
+        else:
+            # 借方：費用科目 / 貸方：預金
+            cols = [
+                "2000", "", "", date_str, target_subj, target_sub, "全社", tax_type, amount, "0",
+                bank_subj, bank_sub, "全社", "対象外", amount, "0", summary_text, "", "", "NO"
+            ]
+
         lines.append(",".join([f'"{c}"' for c in cols]))
     return "\r\n".join(lines)
 
@@ -493,7 +501,13 @@ st.set_page_config(page_title="九門グループ 統合経理・消込＆証憑
 
 st.sidebar.title("🏢 経理くん（統括参謀）")
 current_user_email = st.sidebar.selectbox("操作者", list(USERS.keys()), format_func=lambda x: USERS[x]["name"])
-selected_company = st.sidebar.selectbox("🏢 領収書登録先 法人", USERS[current_user_email]["companies"])
+
+# 会計の対象企業を画面上部/サイドバーで一本化
+target_company = st.sidebar.selectbox("🏢 処理対象の会社（会計主体）", USERS[current_user_email]["companies"])
+
+company_conf = COMPANY_CONFIG[target_company]
+st.sidebar.markdown(f"**口座:** `{company_conf['default_payment']}`")
+st.sidebar.markdown(f"**Drive出力親フォルダ:**\n`{company_conf['output_folder_id']}`")
 
 with st.sidebar.expander("🔑 Google Drive API連携キー設定"):
     custom_token = st.text_area("GOOGLE_TOKEN (JSON文字列)", value="", help="token.jsonの内容を貼り付けるとDrive同期・自動保管が有効化されます。")
@@ -501,36 +515,32 @@ with st.sidebar.expander("🔑 Google Drive API連携キー設定"):
         st.session_state.custom_google_token = custom_token
         st.success("APIキーを受領しました")
 
-st.title("🏢 九門グループ 統合経理・証憑管理＆3社合同消込システム")
+st.title(f"🏢 九門グループ 統合経理システム（対象: {target_company}）")
+st.caption("【3社合同統合マスタ稼働中】スクエニ・Amazon・はき溜め等の全社共通ナレッジで全自動仕分け")
 
-# 2大主要機能のタブ構成
 main_tab_receipt, main_tab_bank = st.tabs([
     "📑 ① 未処理領収書の管理・プレビュー・登録",
-    "🏦 ② PayPay銀行口座明細消込 ＆ 3社合同仕訳"
+    "🏦 ② PayPay銀行 口座明細消込 ＆ 弥生仕訳出力"
 ])
 
-# =========================================================================
-# タブ 1: 領収書管理・プレビュー・仕訳登録
-# =========================================================================
+# ------------------------------------------
+# タブ 1: 領収書管理
+# ------------------------------------------
 with main_tab_receipt:
-    st.subheader(f"📑 未処理領収書プール（対象法人: {selected_company}）")
+    st.subheader(f"📑 未処理領収書プール（対象法人: {target_company}）")
 
     with st.expander("☁️ Google ドライブから領収書を同期する", expanded=False):
-        st.markdown(f"**対象法人: `{selected_company}` の1次読込フォルダ**")
-        folder_id = COMPANY_CONFIG[selected_company]["input_folder_id"]
-        st.info(f"[suspicious link removed]{folder_id}")
+        folder_id = company_conf["input_folder_id"]
+        st.info(f"1次読込フォルダ: [suspicious link removed]{folder_id}")
         if st.button("🔄 Google ドライブから同期を実行", type="primary", key="sync_btn_tab1"):
             with st.spinner("同期中..."):
                 ok, msg = sync_from_company_drive(folder_id, DEFAULT_POOL_DIR)
-                if ok:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.error(msg)
+                if ok: st.success(msg); st.rerun()
+                else: st.error(msg)
 
     pooled_files = get_pooled_files(DEFAULT_POOL_DIR)
     if not pooled_files:
-        st.info("💡 現在未処理プール（receipt_pool）に未処理の領収書はありません。「Google ドライブから同期」を実行するか、ファイルを配置してください。")
+        st.info("💡 現在未処理プール（receipt_pool）に未処理の領収書はありません。")
     else:
         st.success(f"🎯 未処理の領収書: **残り {len(pooled_files)} 件**")
         target_file = pooled_files
@@ -539,7 +549,7 @@ with main_tab_receipt:
 
         c_view, c_form = st.columns([1.2, 1])
         with c_view:
-            st.caption(f"プレビュー表示中: `{target_file}`")
+            st.caption(f"プレビュー: `{target_file}`")
             if ext in [".png", ".jpg", ".jpeg"]:
                 try:
                     img = Image.open(target_path)
@@ -547,7 +557,7 @@ with main_tab_receipt:
                 except Exception as e:
                     st.error(f"画像読み込みエラー: {e}")
             elif ext == ".pdf":
-                st.info("📄 PDF形式の領収書・証憑です。")
+                st.info("📄 PDF形式の領収書です。")
                 with open(target_path, "rb") as f:
                     st.download_button("📥 このPDFを開く／ダウンロード", f.read(), file_name=target_file)
 
@@ -558,175 +568,153 @@ with main_tab_receipt:
 
         with c_form:
             st.markdown("### 📝 領収書の内容を確認して登録")
-            comp_conf = COMPANY_CONFIG[selected_company]
             with st.form("manual_receipt_form"):
                 rec_date = st.date_input("領収書日付", value=date.today())
                 store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file))
 
                 col_f1, col_f2 = st.columns(2)
                 with col_f1:
-                    sel_cat = st.selectbox("勘定科目", comp_conf["categories"])
-                    sel_pay = st.selectbox("決済手段", comp_conf["payments"])
+                    sel_cat = st.selectbox("勘定科目", company_conf["expense_categories"])
+                    sel_pay = st.selectbox("決済手段", list(company_conf["payment_mapping"].keys()))
                 with col_f2:
                     rec_amount = st.number_input("支払金額（税込・円）*", min_value=0, step=100, value=0)
                     sel_tax = st.selectbox("税率", ["課対仕入10%", "課対仕入8%(軽)", "対象外"])
 
                 rec_memo = st.text_input("用途・メモ（相手先・目的など）", placeholder="例: USEN 山田常務 ライセンス打合せ")
 
-                submit_receipt = st.form_submit_button(f"✅ 【{selected_company}】の経費として確定保存", type="primary")
+                submit_receipt = st.form_submit_button(f"✅ 【{target_company}】の経費として確定保存", type="primary")
                 if submit_receipt:
                     if rec_amount <= 0 or not store_name.strip():
                         st.error("支払先と金額を入力してください！")
                     else:
-                        dest_dir = os.path.join(BASE_UPLOAD_DIR, comp_conf["code"])
+                        dest_dir = os.path.join(BASE_UPLOAD_DIR, company_conf["code"])
                         os.makedirs(dest_dir, exist_ok=True)
                         dest_file_path = os.path.join(dest_dir, target_file)
                         shutil.move(target_path, dest_file_path)
                         st.success(f"領収書 `{target_file}` を確定保存しました！")
                         st.rerun()
 
-# =========================================================================
-# タブ 2: PayPay銀行口座明細消込 ＆ 3社合同仕訳
-# =========================================================================
+# ------------------------------------------
+# タブ 2: PayPay口座明細消込 ＆ 弥生仕訳出力
+# ------------------------------------------
 with main_tab_bank:
-    st.subheader("🏦 PayPay銀行 取引明細（PDF / CSV）の投入 ＆ 3社合同仕訳消込")
-    st.caption("【初期基準】ナインゲイツの標準勘定科目で自動分類し、各行でシュガー・SF企画へ自由振替可能")
+    st.subheader(f"🏦 PayPay銀行 口座明細投入（会計主体: {target_company}）")
+    st.caption(f"指定口座: `{company_conf['default_payment']}` の取引明細を3社合同マスタで自動消込します")
 
-    # PDF / CSV 両対応アップローダー
     uploaded_statement = st.file_uploader(
-        "PayPay銀行の取引明細ファイル（PDF または CSV）を選択してください",
+        f"{target_company} の取引明細ファイル（PDF または CSV）を選択してください",
         type=["pdf", "csv"],
         key="bank_file_upload"
     )
 
-    if "transactions_3comp" not in st.session_state:
-        st.session_state.transactions_3comp = []
+    if "transactions_single" not in st.session_state or st.session_state.get("last_company") != target_company:
+        st.session_state.transactions_single = []
+        st.session_state.last_company = target_company
 
     if uploaded_statement:
         file_bytes = uploaded_statement.read()
         if uploaded_statement.name.lower().endswith(".pdf"):
-            parsed_data = parse_paypay_pdf_3companies(file_bytes)
+            parsed_data = parse_paypay_pdf_unified(file_bytes, target_company)
         else:
-            parsed_data = parse_paypay_csv_3companies(file_bytes)
+            parsed_data = parse_paypay_csv_unified(file_bytes, target_company)
 
         if parsed_data:
-            st.session_state.transactions_3comp = parsed_data
-        else:
-            st.warning("⚠️ ファイルから取引行を抽出できませんでした。下の「📋 明細テキスト直接貼り付け」もお試しください。")
+            st.session_state.transactions_single = parsed_data
 
-    # フェイルセーフ：明細テキスト直接コピペ枠
-    with st.expander("📋 明細テキストを直接貼り付けて読み込む（フォールバック）"):
-        direct_text = st.text_area("PayPay銀行の明細行テキストを貼り付けてください", placeholder="2026/10/16 16:08:14 00002 125,000 668,800\n2026/10/16 20:36:47 00003 28,000 640,800 V はき溜め 1A289001")
-        if st.button("📋 テキストから明細を解析して反映"):
+    # テキスト直接貼り付けフォールバック
+    with st.expander("📋 明細テキスト直接貼り付け（フォールバック）"):
+        direct_text = st.text_area("PayPay銀行の明細テキストを直接貼り付け", placeholder="2026/10/16 15:46:48 793,800 793,800 振込 ド）シユガ－")
+        if st.button("📋 テキストから明細を反映"):
             if direct_text:
-                st.session_state.transactions_3comp = parse_paypay_pdf_3companies(direct_text.encode("utf-8"))
+                st.session_state.transactions_single = parse_paypay_pdf_unified(direct_text.encode("utf-8"), target_company)
                 st.rerun()
 
-    if st.session_state.get("transactions_3comp"):
-        records = st.session_state.transactions_3comp
-        st.success(f"📊 明細解析完了: 合計 **{len(records)} 件** ｜ ナインゲイツ標準ルールで初期分類済")
+    if st.session_state.get("transactions_single"):
+        records = st.session_state.transactions_single
+        st.success(f"📊 明細解析完了: 合計 **{len(records)} 件** ｜ 【{target_company}】の取引として自動分類済")
 
         # ----------------------------------------------------
-        # 🏢 3社合同テーブル：行ごとの会社振替 ＆ 科目確定
+        # 仕訳調整テーブル（帰属会社カラムを排除・科目とメモのみに集約）
         # ----------------------------------------------------
-        st.subheader("② 【3社合同仕訳テーブル】会社選択 ＆ 勘定科目調整")
+        st.subheader("② 勘定科目・税務メモの確認・調整")
         for r in records:
             abs_amt = abs(r["amount"])
-            with st.expander(f"[{r['company']}] {r['date']} ｜ {r['summary']} ｜ ¥{abs_amt:,} ｜ 科目: {r['category']}", expanded=not r.get("is_auto_matched", False)):
-                col1, col2, col3, col4 = st.columns([1.5, 2, 2.5, 1])
-                with col1:
-                    comp_list = ["ナインゲイツ", "シュガー", "SF企画"]
-                    cur_comp_idx = comp_list.index(r["company"]) if r["company"] in comp_list else 0
-                    new_comp = st.selectbox("🏢 帰属会社", comp_list, index=cur_comp_idx, key=f"c_sel_{r['id']}")
-                    if new_comp != r["company"]:
-                        r["company"] = new_comp
-                        r["category"] = COMPANY_CONFIG[new_comp]["categories"]
-                        r["payment"] = COMPANY_CONFIG[new_comp]["payments"]
-                        st.rerun()
+            type_label = "💰【入金/売上】" if r.get("is_income") else "💸【出金/経費】"
 
-                with col2:
-                    cat_options = COMPANY_CONFIG[r["company"]]["categories"]
+            with st.expander(f"{type_label} {r['date']} ｜ {r['summary']} ｜ ¥{abs_amt:,} ｜ 科目: {r['category']}", expanded=not r.get("is_auto_matched", False)):
+                col1, col2, col3 = st.columns([1, 17, 18])
+
+                with col1:
+                    # 入金 vs 出金で適切な科目候補を表示
+                    if r.get("is_income"):
+                        cat_options = INCOME_CATEGORIES
+                    else:
+                        cat_options = company_conf["expense_categories"]
+
                     cur_cat_idx = cat_options.index(r["category"]) if r["category"] in cat_options else 0
                     r["category"] = st.selectbox("勘定科目", cat_options, index=cur_cat_idx, key=f"cat_{r['id']}")
 
-                with col3:
-                    r["research_memo"] = st.text_input("業務・税務メモ", value=r.get("research_memo", ""), key=f"memo_{r['id']}")
+                with col2:
+                    r["research_memo"] = st.text_input("業務・税務メモ（取引先・打合せ目的など）", value=r.get("research_memo", ""), key=f"memo_{r['id']}")
 
-                with col4:
+                with col3:
                     st.write("")
                     st.write("")
                     if st.button("確定", key=f"ok_{r['id']}", use_container_width=True):
                         r["is_auto_matched"] = True
-                        st.success("反映完了")
+                        st.success("確定反映")
                         st.rerun()
 
-        # サマリープレビュー
-        st.subheader("📋 3社合同プレビュー一覧")
+        # サマリープレビュー一覧
+        st.subheader(f"📋 【{target_company}】仕訳プレビュー一覧")
         preview_rows = []
         for r in records:
             preview_rows.append({
+                "区分": "💰 入金" if r.get("is_income") else "💸 出金",
                 "日付": r["date"],
                 "金額": r["amount"],
-                "摘要": r["summary"],
-                "🏢 帰属会社": r["company"],
+                "摘要（取引先等）": r["summary"],
                 "勘定科目": r["category"],
                 "決済口座": r["payment"],
                 "税務メモ": r.get("research_memo", "")
             })
         st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
 
-        # 3社個別：弥生仕訳CSV出力タブ
+        # ----------------------------------------------------
+        # 弥生CSVダウンロード ＆ Google Drive自動配送
+        # ----------------------------------------------------
         st.markdown("---")
-        st.subheader("③ 【会社別】弥生仕訳CSVダウンロード")
+        st.subheader(f"③ 【{target_company}】弥生仕訳CSV出力 ＆ Drive保管")
 
-        comp_groups = {"ナインゲイツ": [], "シュガー": [], "SF企画": []}
-        for r in records:
-            comp_groups[r["company"]].append(r)
+        csv_str = generate_yayoi_csv_for_records(records, target_company)
+        try: csv_bytes = csv_str.encode("cp932", errors="replace")
+        except Exception: csv_bytes = csv_str.encode("utf-8-sig")
 
-        tab_ng, tab_sg, tab_sf = st.tabs([
-            f"🏢 ナインゲイツ ({len(comp_groups['ナインゲイツ'])}件)",
-            f"🏢 シュガー ({len(comp_groups['シュガー'])}件)",
-            f"🏢 SF企画 ({len(comp_groups['SF企画'])}件)"
-        ])
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.download_button(
+                label=f"📥 【{target_company}】弥生仕訳CSVをダウンロード ({len(records)}件)",
+                data=csv_bytes,
+                file_name=f"弥生仕訳_{company_conf['code']}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                type="primary",
+                use_container_width=True
+            )
 
-        for tab, c_name in [(tab_ng, "ナインゲイツ"), (tab_sg, "シュガー"), (tab_sf, "SF企画")]:
-            with tab:
-                c_recs = comp_groups[c_name]
-                if c_recs:
-                    csv_str = generate_yayoi_csv_for_records(c_recs, c_name)
-                    try:
-                        csv_bytes = csv_str.encode("cp932", errors="replace")
-                    except Exception:
-                        csv_bytes = csv_str.encode("utf-8-sig")
-                    st.download_button(
-                        label=f"📥 【{c_name}】弥生仕訳CSVをダウンロード ({len(c_recs)}件)",
-                        data=csv_bytes,
-                        file_name=f"弥生仕訳_{COMPANY_CONFIG[c_name]['code']}.csv",
-                        mime="text/csv",
-                        key=f"dl_btn_{c_name}"
-                    )
+        with col_d2:
+            if st.button(f"📁 【{target_company}】Google Drive親フォルダへ自動保存", use_container_width=True):
+                service = get_drive_service()
+                if not service:
+                    st.warning("⚠️ Google Drive API認証キーが未設定です。左サイドバーで設定するか、左ボタンから直接ダウンロードしてください。")
                 else:
-                    st.caption(f"{c_name} に割り振られた取引はありません。")
-
-        # Google Drive 3社自動配送
-        if st.button("📁 ④ 3社のGoogle Drive親フォルダへ仕訳CSVを一括自動配送", type="primary", use_container_width=True):
-            service = get_drive_service()
-            if not service:
-                st.warning("⚠️ Google Drive API認証キーが未設定です。上のタブから各社CSVを直接ダウンロードしてください。")
-            else:
-                with st.spinner("3社のGoogle Drive親フォルダへ自動振り分け配送中..."):
-                    try:
-                        res_msgs = []
-                        for c_name, c_recs in comp_groups.items():
-                            if c_recs:
-                                parent_fid = COMPANY_CONFIG[c_name]["output_folder_id"]
-                                c_csv = generate_yayoi_csv_for_records(c_recs, c_name)
-                                try:
-                                    c_bytes = c_csv.encode("cp932", errors="replace")
-                                except Exception:
-                                    c_bytes = c_csv.encode("utf-8-sig")
-                                upload_file_to_drive(service, parent_fid, f"弥生仕訳_{COMPANY_CONFIG[c_name]['code']}.csv", c_bytes, "text/csv")
-                                res_msgs.append(f"✅ **{c_name}**: {len(c_recs)} 件の仕訳CSVを保管完了")
-                        st.success("🎉 3社一括配送が完了しました！\n\n" + "\n".join(res_msgs))
-                    except Exception as e:
-                        st.error(f"Drive配送エラー: {str(e)}")
+                    with st.spinner(f"Google Drive（{target_company}フォルダ）へ配送中..."):
+                        try:
+                            parent_fid = company_conf["output_folder_id"]
+                            upload_file_to_drive(
+                                service, parent_fid, 
+                                f"弥生仕訳_{company_conf['code']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", 
+                                csv_bytes, "text/csv"
+                            )
+                            st.success(f"🎉 {target_company} のGoogle Driveへ仕訳CSVを安全に自動保管しました！")
+                        except Exception as e:
+                            st.error(f"Drive配送エラー: {str(e)}")
