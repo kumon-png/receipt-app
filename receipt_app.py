@@ -6,7 +6,14 @@ import io
 import re
 from datetime import datetime, date
 from PIL import Image
-from pypdf import PdfReader
+
+# pypdfの遅延安全インポート（未インストール時のクラッシュ防止）
+try:
+    from pypdf import PdfReader
+    HAS_PYPDF = True
+except ImportError:
+    HAS_PYPDF = False
+
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -165,7 +172,7 @@ def get_drive_service():
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
-    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[1].lower() in valid_exts])
+    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f).lower() in valid_exts])
 
 def sync_from_company_drive(folder_id, pool_dir):
     service = get_drive_service()
@@ -235,7 +242,7 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
 
 def extract_month_from_filename_or_mtime(file_path):
     base_name = os.path.basename(file_path)
-    match = re.search(r'(202\d)[-_]?(0[1-9]|1[1, 2])[-_]?(\d{2})', base_name)
+    match = re.search(r'(202\d)[-_]?(0|1)[-_]?(\d{2})', base_name)
     if match:
         year, month = match.group(1), match.group(2)
         return f"{year}-{month}"
@@ -243,10 +250,13 @@ def extract_month_from_filename_or_mtime(file_path):
     return datetime.fromtimestamp(mtime).strftime("%Y-%m")
 
 # ==========================================
-# 5. 明細パース（PDF ＆ CSV 完全両対応）
+# 5. 明細パース（PDF ＆ CSV 安全両対応）
 # ==========================================
 def parse_paypay_pdf(file_bytes, company_name):
-    """PayPay銀行 公式取引明細PDFから取引行を抽出"""
+    if not HAS_PYPDF:
+        st.error("⚠️ サーバー環境に `pypdf` がインストールされていません。GitHubの `requirements.txt` に `pypdf` を追加してください。")
+        return []
+
     conf = COMPANY_CONFIG[company_name]
     records = []
     try:
@@ -256,8 +266,6 @@ def parse_paypay_pdf(file_bytes, company_name):
             full_text += page.extract_text() + "\n"
         
         lines = [l.strip() for l in full_text.split("\n") if l.strip()]
-        
-        # 日付パターン: 2026/10/16 または 2026-10-16
         date_pattern = re.compile(r'^(202\d[/-]\d{1,2}[/-]\d{1,2})')
         
         idx = 0
@@ -266,12 +274,10 @@ def parse_paypay_pdf(file_bytes, company_name):
             if m:
                 raw_date = m.group(1).replace("/", "-")
                 parts = raw_date.split("-")
-                clean_date = f"{parts}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+                clean_date = f"{parts}-{parts.zfill(2)}-{parts.zfill(2)}"
                 month_str = clean_date[:7]
                 
-                # 数字とカンマの金額パターン
                 tokens = line.split()
-                # 金額候補（カンマ付き数字）
                 amounts = []
                 summary_tokens = []
                 for t in tokens:
@@ -281,12 +287,10 @@ def parse_paypay_pdf(file_bytes, company_name):
                     elif not re.match(r'^\d{2}:\d{2}', t) and t not in [clean_date, raw_date]:
                         summary_tokens.append(t)
                 
-                # 典型的なPayPay明細行: 日付 時刻 順番 [出金] [入金] 残高 摘要
                 amount = 0
                 summary = " ".join(summary_tokens)
                 if amounts:
-                    # 最初の金額が出金または入金
-                    amount = -amounts  # 通常は出金
+                    amount = -amounts  # 通常出金
                 
                 if clean_date and amount != 0:
                     summary_lower = summary.lower()
