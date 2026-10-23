@@ -15,6 +15,7 @@ except ImportError:
     HAS_PYPDF = False
 
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
@@ -23,7 +24,7 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 # ==========================================
 def safe_first_str(val, fallback=""):
     if isinstance(val, (list, tuple)):
-        return str(val) if len(val) > 0 else fallback
+        return str(val[0]) if len(val) > 0 else fallback
     if val is None:
         return fallback
     return str(val)
@@ -84,7 +85,6 @@ UNIFIED_ALL_CATEGORIES = [
 # 3. 九門グループ 3社合同 高度自動仕訳マッチングルール
 # ==========================================
 AUTO_MATCH_RULES = [
-    # --- 個別優先ルール ---
     # ① Akari cafe 宇品 → 広告宣伝費（toridoriマーケティング）
     (["akari cafe", "akaricafe", "アカリカフェ", "あかりカフェ"], 
      "広告宣伝費", "課対仕入10%", "[販促] toridoriマーケティング（Akari cafe宇品）"),
@@ -101,7 +101,6 @@ AUTO_MATCH_RULES = [
     (["mitsuinorepark", "mitsuino repark", "三井のリパーク", "リパーク"], 
      "旅費交通費", "課対仕入10%", "[交通費] 駐車代金（三井のリパーク）"),
 
-    # --- 一般辞書ルール ---
     # 広告宣伝費
     (["タベログ", "tabelog", "indeed", "インディード", "tjhiroshima", "アドプレックス", "facebook ads", "google ads", "広告"], 
      "広告宣伝費", "課対仕入10%", "[販促] 広告宣伝掲載費"),
@@ -116,7 +115,7 @@ AUTO_MATCH_RULES = [
 
     # 交際費（接待・取引先会食）
     (["蹄", "hizume", "はき溜め", "はき駄め", "野武士", "nobushi", "エスカイヤ", "esquire", "ふるさと", "西海", "saikai", 
-      "かに道楽", "右近", "とり八", "串カツ田中", "麻ノ葉", "蜂ヤ", "四十", "denuke", "心屋", "すずらん"], 
+      "かに道楽", "右コン", "とり八", "串カツ田中", "麻ノ葉", "蜂ヤ", "四十", "denuke", "心屋", "すずらん"], 
      "交際費", "課対仕入10%", "[会食交際] 取引先・アライアンス打合せ"),
 
     # 会議費（打合せ・軽食）
@@ -221,28 +220,53 @@ os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
 
 # ==========================================
-# 5. Google Drive API 関数
+# 5. Google Drive API 関数（サービスアカウント＆Secrets完全両対応）
 # ==========================================
 def get_drive_service():
     scopes = ['[suspicious link removed]']
     creds = None
-    if os.path.exists('token.json'):
-        try: creds = Credentials.from_authorized_user_file('token.json', scopes)
-        except Exception: creds = None
-    elif "GOOGLE_TOKEN" in st.secrets:
+    auth_source = None
+
+    # 1. サービスアカウント認証（最優先・完全自動）
+    if "GOOGLE_SERVICE_ACCOUNT" in st.secrets:
         try:
-            token_info = json.loads(st.secrets["GOOGLE_TOKEN"])
+            sa_info = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
+            sa_dict = json.loads(sa_info) if isinstance(sa_info, str) else sa_info
+            creds = service_account.Credentials.from_service_account_info(sa_dict, scopes=scopes)
+            auth_source = "サービスアカウント (gemini-api-sa)"
+        except Exception:
+            creds = None
+
+    # 2. token.json の自動読込
+    if not creds and os.path.exists('token.json'):
+        try:
+            creds = Credentials.from_authorized_user_file('token.json', scopes)
+            auth_source = "token.json"
+        except Exception:
+            creds = None
+
+    # 3. Streamlit Secrets (GOOGLE_TOKEN)
+    if not creds and "GOOGLE_TOKEN" in st.secrets:
+        try:
+            token_val = st.secrets["GOOGLE_TOKEN"]
+            token_info = json.loads(token_val) if isinstance(token_val, str) else token_val
             creds = Credentials.from_authorized_user_info(token_info, scopes)
-        except Exception: creds = None
-    elif "custom_google_token" in st.session_state and st.session_state.custom_google_token:
+            auth_source = "Streamlit Secrets (OAuth)"
+        except Exception:
+            creds = None
+
+    # 4. 手動入力セッショントークン
+    if not creds and "custom_google_token" in st.session_state and st.session_state.custom_google_token:
         try:
             token_info = json.loads(st.session_state.custom_google_token)
             creds = Credentials.from_authorized_user_info(token_info, scopes)
-        except Exception: creds = None
+            auth_source = "セッション手動入力"
+        except Exception:
+            creds = None
 
     if creds:
-        return build('drive', 'v3', credentials=creds)
-    return None
+        return build('drive', 'v3', credentials=creds), auth_source
+    return None, None
 
 def get_or_create_monthly_folder(service, parent_folder_id, target_month):
     """親フォルダ内に 'YYYY-MM' フォルダを検索・自動作成"""
@@ -270,7 +294,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
             supportsAllDrives=True
         ).execute()
         return folder.get('id')
-    except Exception as e:
+    except Exception:
         return parent_folder_id
 
 def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
@@ -286,11 +310,11 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
-    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f).lower() in valid_exts])
+    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[1].lower() in valid_exts])
 
 def sync_from_company_drive(folder_id, pool_dir):
-    service = get_drive_service()
-    if not service: return False, "Google Drive API認証キーが設定されていません。"
+    service, _ = get_drive_service()
+    if not service: return False, "Google Drive API認証情報が見つかりません。"
     if not folder_id: return False, "フォルダIDが未設定です。"
 
     synced_ids = []
@@ -566,6 +590,8 @@ div[data-baseweb="select"] {
 </style>
 """, unsafe_allow_html=True)
 
+service_instance, auth_source_name = get_drive_service()
+
 st.sidebar.title("🏢 経理くん（統括参謀）")
 current_user_email = st.sidebar.selectbox("操作者", list(USERS.keys()), format_func=lambda x: USERS[x]["name"])
 target_company = st.sidebar.selectbox("🏢 処理対象の会社（会計主体）", USERS[current_user_email]["companies"])
@@ -573,14 +599,19 @@ target_company = st.sidebar.selectbox("🏢 処理対象の会社（会計主体
 company_conf = COMPANY_CONFIG[target_company]
 st.sidebar.markdown(f"**標準口座:** `{company_conf['default_payment']}`")
 
-with st.sidebar.expander("🔑 Google Drive API連携キー設定", expanded=False):
-    custom_token = st.text_area("GOOGLE_TOKEN (JSON文字列)", value="", help="token.jsonの内容を貼り付けるとDrive同期・月別自動保管が有効化されます。")
-    if custom_token:
-        st.session_state.custom_google_token = custom_token
-        st.success("APIキーを受領しました")
+# 認証ステータス表示
+if service_instance:
+    st.sidebar.success(f"☁️ Google Drive: **認証完了**\n({auth_source_name})")
+else:
+    with st.sidebar.expander("🔑 Google Drive API手動設定", expanded=False):
+        st.info("Secrets未設定時の手動フォールバック枠です")
+        custom_token = st.text_area("GOOGLE_TOKEN (JSON)", value="")
+        if custom_token:
+            st.session_state.custom_google_token = custom_token
+            st.rerun()
 
 st.title(f"🏢 九門グループ 統合経理システム（対象: {target_company}）")
-st.caption("【確定Driveマッピング稼働】月別フォルダ自動振り分け ＆ 3社共通網羅マスター")
+st.caption("【確定Drive自動認証対応】月別フォルダ自動振り分け ＆ 3社共通網羅マスター")
 
 main_tab_receipt, main_tab_bank = st.tabs([
     "📑 ① 未処理領収書の管理・プレビュー・登録",
@@ -707,8 +738,6 @@ with main_tab_bank:
             type_label = "💰【入金/売上】" if r.get("is_income") else "💸【出金/経費】"
 
             with st.expander(f"{type_label} {r['date']} ｜ {r['summary']} ｜ ¥{abs_amt:,} ｜ 科目: {r['category']}", expanded=not r.get("is_auto_matched", False)):
-                
-                # 【上段・1段目】：全社共通マスターから選択（横幅いっぱい）
                 cur_cat_idx = UNIFIED_ALL_CATEGORIES.index(r["category"]) if r["category"] in UNIFIED_ALL_CATEGORIES else 0
                 r["category"] = st.selectbox(
                     "📌 勘定科目（3社共通網羅マスター）", 
@@ -718,8 +747,7 @@ with main_tab_bank:
                     help="広告宣伝費、売掛金、外注費、交際費など全社共通の正式勘定科目です。"
                 )
 
-                # 【下段・2段目】：業務メモ（幅広83%） ＋ 確定ボタン（17%）
-                col_m1, col_m2 = st.columns([5, 1])
+                col_m1, col_m2 = st.columns(2)
                 with col_m1:
                     r["research_memo"] = st.text_input(
                         "📝 業務・税務メモ（取引先・打合せ目的・研究内容など）", 
@@ -752,13 +780,12 @@ with main_tab_bank:
         st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
 
         # ----------------------------------------------------
-        # 月別フォルダ自動生成 ＆ Drive保管（型安全修正済）
+        # 月別フォルダ自動生成 ＆ Drive保管
         # ----------------------------------------------------
         st.markdown("---")
         st.subheader(f"③ 【{target_company}】弥生仕訳CSV出力 ＆ 月別Drive自動保管")
 
-        # リストの先頭レコードから月を取得（安全ガード）
-        target_month_str = records[0].get("month", datetime.now().strftime("%Y-%m")) if (records and isinstance(records[0], dict)) else datetime.now().strftime("%Y-%m")
+        target_month_str = records[0].get("month", datetime.now().strftime("%Y-%m")) if (records and isinstance(records, list) and len(records) > 0 and isinstance(records[0], dict)) else datetime.now().strftime("%Y-%m")
         st.caption(f"📁 保存先: `{target_company}` 親フォルダID: `{company_conf['output_folder_id']}` ＞ **【 `{target_month_str}` 】サブフォルダ**（自動生成）")
 
         csv_str = generate_yayoi_csv_for_records(records, target_company)
@@ -778,9 +805,9 @@ with main_tab_bank:
 
         with col_d2:
             if st.button(f"📁 【{target_company}】月別フォルダへ自動保存", use_container_width=True):
-                service = get_drive_service()
+                service, _ = get_drive_service()
                 if not service:
-                    st.warning("⚠️ Google Drive API認証キーが未設定です。左サイドバーの「🔑 Google Drive API連携キー設定」にトークンを貼り付けてください。")
+                    st.warning("⚠️ Google Drive API認証情報が未設定です。")
                 else:
                     with st.spinner(f"Google Drive（{target_company} ＞ {target_month_str} フォルダ）へ自動配送中..."):
                         try:
