@@ -357,7 +357,6 @@ if paypay_csv_file:
                         st.success(f"🎉 処理完了！\nGoogle Drive『{selected_company}経理くんデータ』内の「{target_month}」フォルダに、仕訳CSV・領収書（{moved_count}件）・消込ログを自動保存・移動しました！")
                     except Exception as e:
                         st.error(f"Google Drive保存エラー: {str(e)}")
-このコードをそのまま receipt_app.py に反映させ、Streamlit画面から「交際費/会議費の10,000円判定」や「研究日報メモの自動付与プレビュー」をご確認ください。さらに追加したい機能や税務チェック要件があれば即座に対応いたします！
 ☁️ Google ドライブから領収書を同期する
 
 
@@ -845,6 +844,10 @@ if paypay_csv_file:
                         upload_file_to_drive(service, month_folder_id, f"消込実行ログ_{target_month}.txt", log_text.encode("utf-8"), "text/plain")
 
                         st.success(f"🎉 処理完了！\nGoogle Drive『{selected_company}経理くんデータ』内の「{target_month}」フォルダに、仕訳CSV・領収書（{moved_count}件）・消込ログを自動移動・保存しました！")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Google Drive保存エラー: {str(e)}")
+  st.success(f"🎉 処理完了！\nGoogle Drive『{selected_company}経理くんデータ』内の「{target_month}」フォルダに、仕訳CSV・領収書（{moved_count}件）・消込ログを自動移動・保存しました！")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Google Drive保存エラー: {str(e)}")
