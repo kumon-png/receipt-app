@@ -39,57 +39,114 @@ USERS = {
 }
 
 # ==========================================
-# 2. 九門グループ 3社合同 統合キーワード辞書データベース
+# 2. 九門グループ 3社完全共通 網羅勘定科目マスター
+# （会社によって分けず、全社で完全共通利用）
 # ==========================================
-COMMON_DINING_KEYWORDS = [
-    "蹄", "野武士", "エスカイヤ", "すし辰", "くら寿司", "スシロー", "なか一", 
-    "アンデルセン", "ふるさと", "焼肉", "寿司", "居酒屋", "バル", "カフェ", 
-    "珈琲", "レストラン", "割烹", "料理", "酒場", "スターバックス", "ドトール", 
-    "バー", "bar", "はき溜め", "はき駄め", "スタンドクラブ", "餃子家龍", "鳥貴族"
+UNIFIED_ALL_CATEGORIES = [
+    # --- 売上・入金・回収系 ---
+    "売上高",
+    "売掛金",
+    "雑収入",
+    "受取利息",
+    "役員借入金（代表立替・借入）",
+    
+    # --- 原価・仕入・外注系 ---
+    "外注費",
+    "買掛金",
+    "仕入高（10%）",
+    "仕入高（8%軽）",
+    
+    # --- 営業・販売促進・研究系 ---
+    "広告宣伝費",
+    "調査研究費（AnimaCast等）",
+    "旅費交通費",
+    "交際費",
+    "会議費",
+    "消耗品費",
+    "新聞図書費",
+    "通信費",
+    "車両費",
+    
+    # --- 管理・施設・公課・その他 ---
+    "地代家賃",
+    "水道光熱費",
+    "支払手数料",
+    "諸会費",
+    "保険料",
+    "法定福利費",
+    "福利厚生費",
+    "租税公課",
+    "減価償却費",
+    "雑費",
+    "開業費"
 ]
 
-GROUP_UNIFIED_KEYWORD_RULES = [
-    # 1. 研究開発・コンテンツ検証・ゲーム経済（AnimaCast Core IP）
+# ==========================================
+# 3. 九門グループ 3社合同 高度自動仕訳マッチングルール
+# （ナインゲイツ、シュガー、SF企画 すべてに共通適用）
+# ==========================================
+AUTO_MATCH_RULES = [
+    # 1. 広告宣伝費
+    (["タベログ", "tabelog", "indeed", "インディード", "tjhiroshima", "アドプレックス", "facebook ads", "google ads", "広告"], 
+     "広告宣伝費", "課対仕入10%", "[販促] 広告宣伝掲載費"),
+
+    # 2. 調査研究費（SF企画 AnimaCast Core IP・ゲーム経済・先端API）
     (["スクウェア", "スクエニ", "ｽｸｳｴｱ", "square enix", "ドラクエ", "任天堂", "nintendo", "steam", "プレイステーション", "ps store"], 
-     "調査研究費", "⑤ 調査研究費・消耗品費", "課対仕入10%", "[研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"),
-    (["google play", "app store", "apple"], 
-     "調査研究費", "⑤ 調査研究費・消耗品費", "課対仕入10%", "[研究日報] AnimaCast：アプリ課金API・決済UI検証"),
-    (["u-next", "netflix", "プライム", "prime"], 
-     "調査研究費", "⑤ 調査研究費・消耗品費", "課対仕入10%", "[研究日報] 映像配信UI/UXストリーミング検証"),
+     "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"),
+    (["google play", "app store", "[suspicious link removed]", "apple"], 
+     "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：アプリ課金API・決済UI検証"),
+    (["u-next", "netflix", "プライムビデオ"], 
+     "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] 映像ストリーミング・配信UI/UX検証"),
 
-    # 2. IT・通信・クラウド
-    (["サイボウズ", "cybozu", "adobe", "ドコモ", "docomo", "マイクロソフト", "gcp", "google", "楽天モバイル", "ドメイン"], 
-     "通信費", "③ 通信費・IT・クラウド利用料", "課対仕入10%", ""),
+    # 3. 交際費（接待・取引先会食）
+    (["蹄", "hizume", "はき溜め", "はき駄め", "野武士", "nobushi", "エスカイヤ", "esquire", "ふるさと", "西海", "saikai", 
+      "かに道楽", "右近", "とり八", "串カツ田中", "麻ノ葉", "リビングユー", "蜂ヤ", "四十", "denuke", "心屋", "すずらん"], 
+     "交際費", "課対仕入10%", "[会食交際] 取引先・アライアンス打合せ"),
 
-    # 3. 旅費交通費・宿泊・移動
-    (["jr", "新幹線", "タクシー", "楽天トラベル", "ホテル", "リパーク", "タイムズ", "駐車場", "park", "瀬戸内海汽船", "汽船"], 
-     "旅費交通費", "① 旅費交通費・車両維持費", "課対仕入10%", ""),
+    # 4. 会議費（打合せ・軽食）
+    (["すし辰", "sushitatsu", "くら寿司", "kura sushi", "スシロー", "sushiro", "アンデルセン", "ロイヤルホスト", 
+      "royalhost", "ゆず庵", "サイゼリヤ", "スターバックス", "ドトール", "珈琲", "カフェ", "電光石火", "ガスト", "ジョイフル"], 
+     "会議費", "課対仕入10%", "[社内・社外会議] 業務打合せ・飲食代"),
 
-    # 4. 車両維持・燃料
-    (["キユウユダイ", "給油", "eneos", "ホウジンetc", "etc", "高速情報協同組合"], 
-     "車両費", "① 旅費交通費・車両維持費", "課対仕入10%", ""),
+    # 5. 通信費（クラウド・IT・通信）
+    (["サイボウズ", "cybozu", "adobe", "アドビ", "マイクロソフト", "msft", "microsoft", "ドコモ", "docomo", 
+      "楽天モバイル", "rakuten mobile", "チュピコム", "usen music", "ミライ工事", "ソウルウェア", "canva", "オートデスク", "autodesk"], 
+     "通信費", "課対仕入10%", ""),
 
-    # 5. 消耗品・工具・備品
-    (["アマゾン", "amazon", "コーナン", "kohnan", "セリア", "ヨドバシ", "モノタロウ", "monotaro", "建デポ", "kendepo", "ニトリ", "nitori"], 
-     "消耗品費", "⑤ 調査研究費・消耗品費", "課対仕入10%", ""),
+    # 6. 消耗品費（資材・工具・事務用品）
+    (["アマゾン", "amazon", "コーナン", "kohnan", "モノタロウ", "monotaro", "建デポ", "kendepo", "西村ジョイ", 
+      "セリア", "seria", "ヨドバシ", "エディオン", "edion", "ニトリ", "nitori", "ジュンテンドー", "コメリ", "ナフコ", "ユニットコム"], 
+     "消耗品費", "課対仕入10%", ""),
 
-    # 6. 店舗飲食・食材仕入（シュガー等）
-    (["wannaeat", "ワナイート", "a-price", "食材"], 
-     "仕入高（8%軽）", "仕入高（8%軽）", "課対仕入8%(軽)", ""),
+    # 7. 旅費交通費（新幹線・宿泊・タクシー・駐車場）
+    (["jr", "西日本旅客鉄道", "東海旅客鉄道", "東日本旅客鉄道", "新幹線", "楽天トラベル", "rakuten travel", 
+      "ホテル", "hotel", "タイムズ", "times", "リパーク", "repart", "グリーンパーク", "スカイパーク", 
+      "タクシー", "taxi", "瀬戸内海汽船", "汽船", "高速情報協同組合"], 
+     "旅費交通費", "課対仕入10%", ""),
 
-    # 7. 外注・専門工事
-    (["ケーティーエス", "kts", "鳥取通信", "ベッセル", "エルワイコンサル", "アイデン", "ミカモ電気", "アルテック", "awc"], 
-     "外注費", "外注費", "課対仕入10%", ""),
+    # 8. 車両費（燃料・車検・整備）
+    (["キユウユダイ", "給油", "eneos", "エネオス", "アポロステーション", "apollostation", "タイヤ館", "スズキ自販", "車検"], 
+     "車両費", "課対仕入10%", ""),
 
-    # 8. 手数料・公課・顧問料
-    (["振込手数料", "手数料", "全厚済", "弁理士", "司法書士", "税理士"], 
-     "支払手数料", "⑥ 支払手数料・租税公課", "課対仕入10%", "")
+    # 9. 食材仕入（シュガー店舗等）
+    (["wannaeat", "ワナイート", "a-price", "大黒天物産", "食材"], 
+     "仕入高（8%軽）", "課対仕入8%(軽)", ""),
+
+    # 10. 外注費（主要施工・開発パートナーへの振込）
+    (["ケーティーエス", "kts", "鳥取通信", "ベッセル", "エルワイコンサル", "アイデン", "ミカモ電気", "アルテック", "awc", "アイ・リンク"], 
+     "外注費", "課対仕入10%", ""),
+
+    # 11. 支払手数料（振込手数料・公課）
+    (["振込手数料", "手数料", "全厚済"], 
+     "支払手数料", "課対仕入10%", ""),
+
+    # 12. 保険料
+    (["sompo", "損保ジャパン", "ビジネスセイト", "火災保険"], 
+     "保険料", "対象外", "")
 ]
 
-INCOME_CATEGORIES = ["売上高", "売掛金", "雑収入", "短期借入金（代表立替戻入）", "預り金"]
-
 # ==========================================
-# 3. 法人別 会計基本マスタ
+# 4. 法人別 設定マスタ（基本口座・Driveフォルダのみ保持）
 # ==========================================
 COMPANY_CONFIG = {
     "ナインゲイツ": {
@@ -98,11 +155,6 @@ COMPANY_CONFIG = {
         "input_folder_id": "1upG2C-m-An3VcI1ULE7A6BwHipRzIjge",
         "output_folder_id": "1xtj1g42RSwOa_eUATF89qLdS_JiM_yQ8",
         "default_payment": "普通預金（PayPay銀行 005-1744850）",
-        "expense_categories": [
-            "外注費", "仕入高", "仕入高（8%軽）", "旅費交通費", "消耗品費", 
-            "車両費", "通信費", "会議費", "交際費", "地代家賃", 
-            "水道光熱費", "支払手数料", "法定福利費", "福利厚生費", "雑費"
-        ],
         "payment_mapping": {
             "普通預金（PayPay銀行 005-1744850）": ("普通預金", "PayPay銀行(1744850)"),
             "普通預金（広島市信用組合 117-0878359-0）": ("普通預金", "広島市信用組合"),
@@ -110,7 +162,7 @@ COMPANY_CONFIG = {
             "役員立替（PayPay個人 003-2060281）": ("役員借入金", "九門久士(PayPay)"),
             "役員立替（楽天個人 214-4383608）": ("役員借入金", "九門久士(楽天)"),
             "クレジットカード（未払金）": ("未払金", "カード"),
-            "現金": ("現金", ""),
+            "現金": ("現金", "")
         }
     },
     "シュガー": {
@@ -119,10 +171,6 @@ COMPANY_CONFIG = {
         "input_folder_id": "1qo5FqrpHDFgY4tzf32YaYbFQB6wCQ9Ih",
         "output_folder_id": "19HhywRqfSRG2tWMVzDkcw6DlmCMGLgSI",
         "default_payment": "普通預金（PayPay銀行 005-5332515）",
-        "expense_categories": [
-            "外注費", "仕入高（8%軽）", "仕入高（10%）", "地代家賃", "旅費交通費", 
-            "消耗品費", "支払手数料", "荷造運賃", "リース料", "雑費", "開業費"
-        ],
         "payment_mapping": {
             "普通預金（PayPay銀行 005-5332515）": ("普通預金", "PayPay銀行(5332515)"),
             "普通預金（PayPay法人 005-5332523）": ("普通預金", "PayPay法人(5332523)"),
@@ -140,15 +188,6 @@ COMPANY_CONFIG = {
         "input_folder_id": "1BZrjf_kq_kNLsXoOOMfRxUKiJSydC5Qa",
         "output_folder_id": "1VuS4VHIPpNG8HPbARq4xkkDUdE_wN8U6",
         "default_payment": "普通預金（PayPay銀行 005-2423746）",
-        "expense_categories": [
-            "⑤ 調査研究費・消耗品費",
-            "① 旅費交通費・車両維持費",
-            "② 会議費・接待交際費",
-            "③ 通信費・IT・クラウド利用料",
-            "④ 地代家賃・水道光熱費",
-            "⑥ 支払手数料・租税公課",
-            "開業費（繰延資産）"
-        ],
         "payment_mapping": {
             "普通預金（PayPay銀行 005-2423746）": ("普通預金", "PayPay銀行(2423746)"),
             "役員立替（PayPay個人 003-2060281）": ("役員借入金", "九門久士(PayPay)"),
@@ -166,7 +205,7 @@ os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
 
 # ==========================================
-# 4. Google Drive API 関数
+# 5. Google Drive API 関数
 # ==========================================
 def get_drive_service():
     scopes = ['[suspicious link removed]']
@@ -238,34 +277,30 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
     return service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
 
 # ==========================================
-# 5. 3社合同マスタによる口座明細自動分類エンジン
+# 6. 超自動仕訳マッチング判定エンジン
 # ==========================================
-def match_unified_category(summary_text, target_company, is_income):
+def match_intelligent_category(summary_text, is_income):
+    """取引内容・店名から勘定科目・税区分・メモを全自動決定"""
     summary_lower = summary_text.lower()
-    comp_conf = COMPANY_CONFIG[target_company]
-    is_sf = (target_company == "SF企画")
 
     if is_income:
         if "利息" in summary_lower:
-            return "受取利息", "", "非課売上", True, ""
-        return "売上高", "", "課税売上10%", True, ""
+            return "受取利息", "非課売上", True, "[決算] 預金利息"
+        if any(k in summary_lower for k in ["クモン", "九門", "代表", "立替"]):
+            return "役員借入金（代表立替・借入）", "対象外", True, "代表立替・役員借入金戻入"
+        # 振込入金・売上回収
+        return "売上高", "課税売上10%", True, "売上高・売掛金回収入金"
 
-    if any(k.lower() in summary_lower for k in COMMON_DINING_KEYWORDS):
-        cat = "② 会議費・接待交際費" if is_sf else "交際費"
-        return cat, "", "課対仕入10%", True, ""
-
-    for keywords, standard_cat, sf_cat, tax_type, memo in GROUP_UNIFIED_KEYWORD_RULES:
+    # 出金取引の辞書マッチング
+    for keywords, category, tax_type, memo in AUTO_MATCH_RULES:
         for kw in keywords:
             if kw.lower() in summary_lower:
-                chosen_cat = sf_cat if is_sf else standard_cat
-                if chosen_cat not in comp_conf["expense_categories"]:
-                    chosen_cat = "⑤ 調査研究費・消耗品費" if is_sf else safe_first_str(comp_conf["expense_categories"], "雑費")
-                return chosen_cat, "", tax_type, True, memo
+                return category, tax_type, True, memo
 
-    default_cat = comp_conf["expense_categories"][-1]
-    return default_cat, "", "課対仕入10%", False, ""
+    # マッチしなかった場合のデフォルト
+    return "雑費", "課対仕入10%", False, ""
 
-def parse_paypay_pdf_unified(file_bytes, target_company):
+def parse_paypay_pdf_intelligent(file_bytes, target_company):
     if not HAS_PYPDF:
         st.error("⚠️ サーバー環境に `pypdf` がインストールされていません。")
         return []
@@ -313,6 +348,7 @@ def parse_paypay_pdf_unified(file_bytes, target_company):
                     summary = re.sub(r'[\|\s]+$', '', summary)
                     summary_lower = summary.lower()
 
+                    # 入出金判定
                     is_income = False
                     if len(amounts) >= 2 and amounts == amounts:
                         is_income = True
@@ -327,7 +363,7 @@ def parse_paypay_pdf_unified(file_bytes, target_company):
                     if not summary:
                         summary = "PayPay銀行入金" if is_income else "PayPay銀行出金"
 
-                    category, sub_acc, tax_type, is_matched, memo = match_unified_category(summary, target_company, is_income)
+                    category, tax_type, is_matched, memo = match_intelligent_category(summary, is_income)
 
                     records.append({
                         "id": f"rec_{idx}",
@@ -337,10 +373,9 @@ def parse_paypay_pdf_unified(file_bytes, target_company):
                         "is_income": is_income,
                         "summary": summary,
                         "category": category,
-                        "sub_account": sub_acc,
+                        "sub_account": "",
                         "tax_type": tax_type,
                         "payment": default_pay,
-                        "is_dining": any(k.lower() in summary_lower for k in COMMON_DINING_KEYWORDS),
                         "is_auto_matched": is_matched,
                         "dining_info": None,
                         "research_memo": memo
@@ -351,7 +386,7 @@ def parse_paypay_pdf_unified(file_bytes, target_company):
         st.error(f"PayPay銀行PDF明細の解析エラー: {e}")
         return []
 
-def parse_paypay_csv_unified(file_bytes, target_company):
+def parse_paypay_csv_intelligent(file_bytes, target_company):
     comp_conf = COMPANY_CONFIG[target_company]
     default_pay = comp_conf["default_payment"]
 
@@ -406,7 +441,7 @@ def parse_paypay_csv_unified(file_bytes, target_company):
 
             if date_val and amount != 0:
                 clean_date = date_val[:10]
-                category, sub_acc, tax_type, is_matched, memo = match_unified_category(summary, target_company, is_income)
+                category, tax_type, is_matched, memo = match_intelligent_category(summary, is_income)
 
                 records.append({
                     "id": f"csv_rec_{idx}",
@@ -416,10 +451,9 @@ def parse_paypay_csv_unified(file_bytes, target_company):
                     "is_income": is_income,
                     "summary": summary,
                     "category": category,
-                    "sub_account": sub_acc,
+                    "sub_account": "",
                     "tax_type": tax_type,
                     "payment": default_pay,
-                    "is_dining": any(k.lower() in summary.lower() for k in COMMON_DINING_KEYWORDS),
                     "is_auto_matched": is_matched,
                     "dining_info": None,
                     "research_memo": memo
@@ -455,12 +489,15 @@ def generate_yayoi_csv_for_records(target_records, company_name):
 
         summary_text = f"{base_summary} {' '.join(memo_parts)}".strip()
 
+        # 入金取引 vs 出金取引の貸借振り分け
         if row.get("is_income", False):
+            # 借方：預金（対象外） / 貸方：売上科目
             cols = [
                 "2000", "", "", date_str, bank_subj, bank_sub, "全社", "対象外", amount, "0",
                 target_subj, target_sub, "全社", tax_type, amount, "0", summary_text, "", "", "NO"
             ]
         else:
+            # 借方：費用科目 / 貸方：預金（対象外）
             cols = [
                 "2000", "", "", date_str, target_subj, target_sub, "全社", tax_type, amount, "0",
                 bank_subj, bank_sub, "全社", "対象外", amount, "0", summary_text, "", "", "NO"
@@ -470,18 +507,17 @@ def generate_yayoi_csv_for_records(target_records, company_name):
     return "\r\n".join(lines)
 
 # ==========================================
-# 6. Streamlit メイン UI
+# 7. Streamlit メイン UI
 # ==========================================
 st.set_page_config(page_title="九門グループ 統合経理・消込＆証憑管理", layout="wide")
 
-# CSSでセレクトボックス等のフォントサイズと余白を最適化
 st.markdown("""
 <style>
 div[data-baseweb="select"] {
     font-size: 16px !important;
 }
 .stSelectbox label {
-    font-size: 14px !important;
+    font-size: 15px !important;
     font-weight: bold !important;
 }
 </style>
@@ -501,7 +537,7 @@ with st.sidebar.expander("🔑 Google Drive API連携キー設定"):
         st.success("APIキーを受領しました")
 
 st.title(f"🏢 九門グループ 統合経理システム（対象: {target_company}）")
-st.caption("【3社合同統合マスタ稼働中】スクエニ・Amazon・はき溜め等の全社共通ナレッジで全自動仕分け")
+st.caption("【全社共通 網羅科目マスター稼働】広告宣伝費・売掛金・買掛金・外注費・交際費等を完全自動仕分け")
 
 main_tab_receipt, main_tab_bank = st.tabs([
     "📑 ① 未処理領収書の管理・プレビュー・登録",
@@ -557,15 +593,17 @@ with main_tab_receipt:
                 rec_date = st.date_input("領収書日付", value=date.today())
                 store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file))
 
+                # 3社完全共通マスターから科目選択
+                sel_cat = st.selectbox("勘定科目（全社共通マスター）", UNIFIED_ALL_CATEGORIES, index=UNIFIED_ALL_CATEGORIES.index("消耗品費"))
+                sel_pay = st.selectbox("決済手段", list(company_conf["payment_mapping"].keys()))
+
                 col_f1, col_f2 = st.columns(2)
                 with col_f1:
-                    sel_cat = st.selectbox("勘定科目", company_conf["expense_categories"])
-                    sel_pay = st.selectbox("決済手段", list(company_conf["payment_mapping"].keys()))
-                with col_f2:
                     rec_amount = st.number_input("支払金額（税込・円）*", min_value=0, step=100, value=0)
+                with col_f2:
                     sel_tax = st.selectbox("税率", ["課対仕入10%", "課対仕入8%(軽)", "対象外"])
 
-                rec_memo = st.text_input("用途・メモ（相手先・目的など）", placeholder="例: USEN 山田常務 ライセンス打合せ")
+                rec_memo = st.text_input("用途・メモ（相手先・目的など）", placeholder="例: [販促] 新規事業広告掲載")
 
                 submit_receipt = st.form_submit_button(f"✅ 【{target_company}】の経費として確定保存", type="primary")
                 if submit_receipt:
@@ -584,7 +622,7 @@ with main_tab_receipt:
 # ------------------------------------------
 with main_tab_bank:
     st.subheader(f"🏦 PayPay銀行 口座明細投入（会計主体: {target_company}）")
-    st.caption(f"指定口座: `{company_conf['default_payment']}` の取引明細を自動消込します")
+    st.caption(f"指定口座: `{company_conf['default_payment']}` の取引明細を3社合同マスターで自動消込します")
 
     uploaded_statement = st.file_uploader(
         f"{target_company} の取引明細ファイル（PDF または CSV）を選択してください",
@@ -599,9 +637,9 @@ with main_tab_bank:
     if uploaded_statement:
         file_bytes = uploaded_statement.read()
         if uploaded_statement.name.lower().endswith(".pdf"):
-            parsed_data = parse_paypay_pdf_unified(file_bytes, target_company)
+            parsed_data = parse_paypay_pdf_intelligent(file_bytes, target_company)
         else:
-            parsed_data = parse_paypay_csv_unified(file_bytes, target_company)
+            parsed_data = parse_paypay_csv_intelligent(file_bytes, target_company)
 
         if parsed_data:
             st.session_state.transactions_single = parsed_data
@@ -611,15 +649,15 @@ with main_tab_bank:
         direct_text = st.text_area("PayPay銀行の明細テキストを直接貼り付け", placeholder="2026/10/16 15:46:48 793,800 793,800 振込 ド）シユガ－")
         if st.button("📋 テキストから明細を反映"):
             if direct_text:
-                st.session_state.transactions_single = parse_paypay_pdf_unified(direct_text.encode("utf-8"), target_company)
+                st.session_state.transactions_single = parse_paypay_pdf_intelligent(direct_text.encode("utf-8"), target_company)
                 st.rerun()
 
     if st.session_state.get("transactions_single"):
         records = st.session_state.transactions_single
-        st.success(f"📊 明細解析完了: 合計 **{len(records)} 件** ｜ 【{target_company}】の取引として自動分類済")
+        st.success(f"📊 明細解析完了: 合計 **{len(records)} 件** ｜ 3社共通マスターで全自動仕分け済")
 
         # ----------------------------------------------------
-        # 💡 【改善】2段レイアウトによる勘定科目ワイド表示テーブル
+        # 2段ワイド表示：全社共通勘定科目マスターによる仕訳調整
         # ----------------------------------------------------
         st.subheader("② 勘定科目・税務メモの確認・調整")
         for r in records:
@@ -628,29 +666,24 @@ with main_tab_bank:
 
             with st.expander(f"{type_label} {r['date']} ｜ {r['summary']} ｜ ¥{abs_amt:,} ｜ 科目: {r['category']}", expanded=not r.get("is_auto_matched", False)):
                 
-                # 【上段・1段目】：勘定科目を全幅ワイド表示（見切れ防止）
-                if r.get("is_income"):
-                    cat_options = INCOME_CATEGORIES
-                else:
-                    cat_options = company_conf["expense_categories"]
-
-                cur_cat_idx = cat_options.index(r["category"]) if r["category"] in cat_options else 0
+                # 【上段・1段目】：全社共通マスターから選択（横幅いっぱい）
+                cur_cat_idx = UNIFIED_ALL_CATEGORIES.index(r["category"]) if r["category"] in UNIFIED_ALL_CATEGORIES else 0
                 r["category"] = st.selectbox(
-                    "📌 勘定科目（正式名称）", 
-                    cat_options, 
+                    "📌 勘定科目（3社共通網羅マスター）", 
+                    UNIFIED_ALL_CATEGORIES, 
                     index=cur_cat_idx, 
                     key=f"cat_{r['id']}",
-                    help="選択した科目がそのまま弥生会計の仕訳科目として登録されます。"
+                    help="広告宣伝費、売掛金、外注費、交際費など全社共通の正式勘定科目です。"
                 )
 
                 # 【下段・2段目】：業務メモ（幅広） ＋ 確定ボタン
-                col_m1, col_m2 = st.columns([5, 1])
+                col_m1, col_m2 = st.columns([20, 37])
                 with col_m1:
                     r["research_memo"] = st.text_input(
-                        "📝 業務・税務メモ（研究内容・打合せ相手など）", 
+                        "📝 業務・税務メモ（取引先・打合せ目的・研究内容など）", 
                         value=r.get("research_memo", ""), 
                         key=f"memo_{r['id']}",
-                        placeholder="例: [研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"
+                        placeholder="例: [販促] TJHiroshima広告掲載 / [会食] USEN山田常務打合せ"
                     )
 
                 with col_m2:
