@@ -6,6 +6,7 @@ import io
 import re
 from datetime import datetime, date
 from PIL import Image
+from pypdf import PdfReader
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -164,7 +165,7 @@ def get_drive_service():
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
-    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[8].lower() in valid_exts])
+    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[1].lower() in valid_exts])
 
 def sync_from_company_drive(folder_id, pool_dir):
     service = get_drive_service()
@@ -234,7 +235,7 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
 
 def extract_month_from_filename_or_mtime(file_path):
     base_name = os.path.basename(file_path)
-    match = re.search(r'(202\d)[-_]?(0[1, 2, 8-14]|1[1, 8])[-_]?(\d{2})', base_name)
+    match = re.search(r'(202\d)[-_]?(0[1-9]|1[1, 2])[-_]?(\d{2})', base_name)
     if match:
         year, month = match.group(1), match.group(2)
         return f"{year}-{month}"
@@ -242,8 +243,97 @@ def extract_month_from_filename_or_mtime(file_path):
     return datetime.fromtimestamp(mtime).strftime("%Y-%m")
 
 # ==========================================
-# 5. PayPay明細パース ＆ 飲食・研究自動検知
+# 5. 明細パース（PDF ＆ CSV 完全両対応）
 # ==========================================
+def parse_paypay_pdf(file_bytes, company_name):
+    """PayPay銀行 公式取引明細PDFから取引行を抽出"""
+    conf = COMPANY_CONFIG[company_name]
+    records = []
+    try:
+        reader = PdfReader(io.BytesIO(file_bytes))
+        full_text = ""
+        for page in reader.pages:
+            full_text += page.extract_text() + "\n"
+        
+        lines = [l.strip() for l in full_text.split("\n") if l.strip()]
+        
+        # 日付パターン: 2026/10/16 または 2026-10-16
+        date_pattern = re.compile(r'^(202\d[/-]\d{1,2}[/-]\d{1,2})')
+        
+        idx = 0
+        for line in lines:
+            m = date_pattern.match(line)
+            if m:
+                raw_date = m.group(1).replace("/", "-")
+                parts = raw_date.split("-")
+                clean_date = f"{parts}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+                month_str = clean_date[:7]
+                
+                # 数字とカンマの金額パターン
+                tokens = line.split()
+                # 金額候補（カンマ付き数字）
+                amounts = []
+                summary_tokens = []
+                for t in tokens:
+                    num_clean = t.replace(",", "").replace("円", "")
+                    if num_clean.isdigit() and len(num_clean) >= 2:
+                        amounts.append(int(num_clean))
+                    elif not re.match(r'^\d{2}:\d{2}', t) and t not in [clean_date, raw_date]:
+                        summary_tokens.append(t)
+                
+                # 典型的なPayPay明細行: 日付 時刻 順番 [出金] [入金] 残高 摘要
+                amount = 0
+                summary = " ".join(summary_tokens)
+                if amounts:
+                    # 最初の金額が出金または入金
+                    amount = -amounts  # 通常は出金
+                
+                if clean_date and amount != 0:
+                    summary_lower = summary.lower()
+                    is_dining = any(k.lower() in summary_lower for k in DINING_KEYWORDS)
+                    
+                    auto_memo = ""
+                    if company_name == "SF企画":
+                        if any(k in summary_lower for k in ["google play", "app store", "apple"]):
+                            auto_memo = "[研究日報] AnimaCast：課金API・決済UI検証"
+                        elif any(k in summary_lower for k in ["u-next", "netflix", "プライム"]):
+                            auto_memo = "[研究日報] 映像配信UI/UXストリーミング検証"
+                        elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square"]):
+                            auto_memo = "[研究日報] AnimaCast：ゲーム内経済循環調査"
+
+                    category = conf["categories"] if conf["categories"] else "雑費"
+                    sub_account = ""
+                    tax_type = "課対仕入10%"
+
+                    if is_dining:
+                        category = "交際費" if company_name != "SF企画" else "② 会議費・接待交際費"
+
+                    for keywords, cat, sub_acc, t_type in conf.get("keyword_rules", []):
+                        for kw in keywords:
+                            if kw.lower() in summary_lower:
+                                category, sub_account, tax_type = cat, sub_acc, t_type
+                                break
+
+                    records.append({
+                        "id": f"pdf_rec_{idx}",
+                        "date": clean_date,
+                        "month": month_str,
+                        "amount": int(amount),
+                        "summary": summary if summary else "普通預金出入金",
+                        "category": category,
+                        "sub_account": sub_account,
+                        "tax_type": tax_type,
+                        "payment": conf["payments"],
+                        "is_dining": is_dining,
+                        "dining_info": None,
+                        "research_memo": auto_memo
+                    })
+                    idx += 1
+        return records
+    except Exception as e:
+        st.error(f"PayPay銀行PDF明細の解析エラー: {e}")
+        return []
+
 def parse_paypay_csv(file_bytes, company_name):
     conf = COMPANY_CONFIG[company_name]
     try:
@@ -252,17 +342,38 @@ def parse_paypay_csv(file_bytes, company_name):
         except Exception:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding="shift_jis")
         
+        df.columns = [str(c).strip() for c in df.columns]
+        
         records = []
         for idx, row in df.iterrows():
             row_dict = {str(k).strip(): str(v).strip() for k, v in row.items()}
+            
             date_val = ""
-            for c in ["取引日", "日付", "年月日", "取引日時"]:
-                if c in row_dict and row_dict[c] != "nan":
-                    date_val = row_dict[c].replace("/", "-")
+            if "操作日(年)" in row_dict and "操作日(月)" in row_dict and "操作日(日)" in row_dict:
+                y = row_dict["操作日(年)"].replace(".0", "").strip()
+                m = row_dict["操作日(月)"].replace(".0", "").strip().zfill(2)
+                d = row_dict["操作日(日)"].replace(".0", "").strip().zfill(2)
+                if y != "nan" and m != "nan" and d != "nan" and len(y) == 4:
+                    date_val = f"{y}-{m}-{d}"
+            
+            if not date_val:
+                for c in ["取引日", "日付", "年月日", "取引日時"]:
+                    if c in row_dict and row_dict[c] != "nan":
+                        date_val = row_dict[c].replace("/", "-")[:10]
+                        break
+            
+            out_amt = "0"
+            for out_col in ["お支払金額", "出金金額(円)", "出金額", "出金"]:
+                if out_col in row_dict and row_dict[out_col] != "nan" and row_dict[out_col].strip():
+                    out_amt = row_dict[out_col]
+                    break
+                    
+            in_amt = "0"
+            for in_col in ["お預り金額", "入金金額(円)", "入金額", "入金"]:
+                if in_col in row_dict and row_dict[in_col] != "nan" and row_dict[in_col].strip():
+                    in_amt = row_dict[in_col]
                     break
             
-            out_amt = row_dict.get("出金金額(円)", row_dict.get("出金額", "0"))
-            in_amt = row_dict.get("入金金額(円)", row_dict.get("入金額", "0"))
             try:
                 out_val = float(str(out_amt).replace(",", "").replace("円", "")) if out_amt != "nan" else 0
                 in_val = float(str(in_amt).replace(",", "").replace("円", "")) if in_amt != "nan" else 0
@@ -271,7 +382,7 @@ def parse_paypay_csv(file_bytes, company_name):
                 amount = 0
             
             summary = ""
-            for c in ["お取引内容", "摘要", "取引内容", "振込人名", "支払先"]:
+            for c in ["摘要", "お取引内容", "取引内容", "振込人名", "支払先"]:
                 if c in row_dict and row_dict[c] != "nan":
                     summary = row_dict[c]
                     break
@@ -396,20 +507,26 @@ with st.expander("☁️ Google ドライブから領収書を同期する", exp
 st.markdown("---")
 
 # ------------------------------------------
-# メイン処理：PayPay明細CSVアップロード ＆ 複数月自動分割解析
+# メイン処理：PayPay銀行 明細アップロード（PDF / CSV 両対応）
 # ------------------------------------------
-st.subheader("① PayPay銀行 口座明細CSVをアップロード（複数月混在可）")
-paypay_csv_file = st.file_uploader("PayPay明細CSVを選択してください（期間自由：例 8/1〜10/15）", type=["csv"])
+st.subheader("① PayPay銀行 口座明細をアップロード（PDFまたはCSV・複数月混在可）")
+uploaded_statement = st.file_uploader(
+    "PayPay銀行の取引明細ファイル（PDF または CSV）を選択してください", 
+    type=["pdf", "csv"]
+)
 
 if "transactions" not in st.session_state or st.session_state.get("last_company") != selected_company:
     st.session_state.transactions = []
     st.session_state.last_company = selected_company
 
-if paypay_csv_file:
-    if not st.session_state.transactions:
-        st.session_state.transactions = parse_paypay_csv(paypay_csv_file.read(), selected_company)
+if uploaded_statement:
+    file_bytes = uploaded_statement.read()
+    if uploaded_statement.name.lower().endswith(".pdf"):
+        st.session_state.transactions = parse_paypay_pdf(file_bytes, selected_company)
+    else:
+        st.session_state.transactions = parse_paypay_csv(file_bytes, selected_company)
 
-if st.session_state.transactions:
+if st.session_state.get("transactions"):
     records = st.session_state.transactions
     
     monthly_groups = {}
