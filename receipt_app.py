@@ -19,12 +19,11 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ==========================================
-# 0. 型安全ヘルパー関数（リスト混入防止デリスク）
+# 0. 型安全ヘルパー関数
 # ==========================================
 def safe_first_str(val, fallback=""):
-    """リストやタプルが渡された場合、先頭の文字列要素を安全に取り出す"""
     if isinstance(val, (list, tuple)):
-        return str(val[0]) if len(val) > 0 else fallback
+        return str(val) if len(val) > 0 else fallback
     if val is None:
         return fallback
     return str(val)
@@ -45,7 +44,7 @@ USERS = {
 DINING_KEYWORDS = [
     "蹄", "野武士", "エスカイヤ", "すし辰", "くら寿司", "スシロー", "なか一", 
     "アンデルセン", "ふるさと", "焼肉", "寿司", "居酒屋", "バル", "カフェ", 
-    "珈琲", "レストラン", "割烹", "料理", "酒場", "スターバックス", "ドトール"
+    "珈琲", "レストラン", "割烹", "料理", "酒場", "スターバックス", "ドトール", "バー", "bar"
 ]
 
 # ==========================================
@@ -263,7 +262,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
     res = service.files().list(q=query, fields="files(id, name)", spaces='drive').execute()
     files = res.get('files', [])
     if files:
-        return files[0]['id']
+        return files['id']
     folder_metadata = {'name': target_month, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
     folder = service.files().create(body=folder_metadata, fields='id').execute()
     return folder.get('id')
@@ -283,7 +282,7 @@ def extract_month_from_filename_or_mtime(file_path):
     return datetime.fromtimestamp(mtime).strftime("%Y-%m")
 
 # ==========================================
-# 5. 明細パース（PDF ＆ CSV 安全両対応）
+# 5. 明細パース（自動判定フラグ付き）
 # ==========================================
 def parse_paypay_pdf(file_bytes, company_name):
     if not HAS_PYPDF:
@@ -330,7 +329,7 @@ def parse_paypay_pdf(file_bytes, company_name):
                 amount = 0
                 summary = " ".join(summary_tokens).strip()
                 if amounts:
-                    amount = -amounts[0]
+                    amount = -amounts
                 
                 if clean_date and amount != 0:
                     summary_lower = summary.lower()
@@ -348,26 +347,25 @@ def parse_paypay_pdf(file_bytes, company_name):
                     category = default_cat
                     sub_account = ""
                     tax_type = "課対仕入10%"
+                    is_auto_matched = False
 
                     if is_dining:
                         category = "② 会議費・接待交際費" if company_name == "SF企画" else "交際費"
+                        is_auto_matched = True
 
-                    matched_rule = False
                     for keywords, cat, sub_acc, t_type in conf.get("keyword_rules", []):
                         for kw in keywords:
                             if kw.lower() in summary_lower:
                                 category = safe_first_str(cat, default_cat)
                                 sub_account = sub_acc
                                 tax_type = t_type
-                                matched_rule = True
+                                is_auto_matched = True
                                 break
-                        if matched_rule:
+                        if is_auto_matched:
                             break
 
                     if not summary:
                         summary = "PayPay銀行出入金"
-                        if company_name == "SF企画":
-                            category = "⑤ 調査研究費・消耗品費"
 
                     records.append({
                         "id": f"pdf_rec_{idx}",
@@ -380,6 +378,7 @@ def parse_paypay_pdf(file_bytes, company_name):
                         "tax_type": tax_type,
                         "payment": default_pay,
                         "is_dining": is_dining,
+                        "is_auto_matched": is_auto_matched,
                         "dining_info": None,
                         "research_memo": auto_memo
                     })
@@ -460,20 +459,21 @@ def parse_paypay_csv(file_bytes, company_name):
                 category = default_cat
                 sub_account = ""
                 tax_type = "課対仕入10%"
+                is_auto_matched = False
 
                 if is_dining:
                     category = "② 会議費・接待交際費" if company_name == "SF企画" else "交際費"
+                    is_auto_matched = True
 
-                matched_rule = False
                 for keywords, cat, sub_acc, t_type in conf.get("keyword_rules", []):
                     for kw in keywords:
                         if kw.lower() in summary_lower:
                             category = safe_first_str(cat, default_cat)
                             sub_account = sub_acc
                             tax_type = t_type
-                            matched_rule = True
+                            is_auto_matched = True
                             break
-                    if matched_rule:
+                    if is_auto_matched:
                         break
 
                 clean_date = date_val[:10]
@@ -488,6 +488,7 @@ def parse_paypay_csv(file_bytes, company_name):
                     "tax_type": tax_type,
                     "payment": default_pay,
                     "is_dining": is_dining,
+                    "is_auto_matched": is_auto_matched,
                     "dining_info": None,
                     "research_memo": auto_memo
                 })
@@ -501,13 +502,11 @@ def generate_yayoi_csv_for_records(target_records, company_name):
     default_pay = safe_first_str(conf["payments"], "普通預金")
     lines = []
     for row in target_records:
-        # pay_methodを確実に文字列型として抽出
         raw_pay = row.get("payment", default_pay)
         pay_method = safe_first_str(raw_pay, default_pay)
             
         credit_subj, credit_sub = conf["payment_mapping"].get(pay_method, ("普通預金", ""))
         
-        # categoryも確実に文字列型として抽出
         raw_cat = row.get("category", "外注費")
         debit_subj = safe_first_str(raw_cat, "外注費")
         
@@ -549,7 +548,6 @@ current_output_folder_id = company_conf["output_folder_id"]
 st.sidebar.markdown(f"**📂 1次読込フォルダID:**\n`{current_input_folder_id}`")
 st.sidebar.markdown(f"**📁 出力先親フォルダID:**\n`{current_output_folder_id}`")
 
-# Google Drive手動トークン設定枠（フェイルセーフ）
 with st.sidebar.expander("🔑 Google Drive API連携キー設定"):
     custom_token = st.text_area("GOOGLE_TOKEN (JSON文字列)", value="", help="token.jsonの内容をそのまま貼り付けるとDrive連携が有効化されます。")
     if custom_token:
@@ -585,7 +583,7 @@ with st.expander("☁️ Google ドライブから領収書を同期する", exp
 st.markdown("---")
 
 # ------------------------------------------
-# メイン処理：PayPay銀行 明細アップロード（PDF / CSV 両対応）
+# メイン処理：PayPay銀行 明細アップロード
 # ------------------------------------------
 st.subheader("① PayPay銀行 口座明細をアップロード（PDFまたはCSV・複数月混在可）")
 uploaded_statement = st.file_uploader(
@@ -618,12 +616,47 @@ if st.session_state.get("transactions"):
     st.info(f"📊 明細解析完了: 合計 **{len(records)} 件** ｜ 検出月: **{', '.join(detected_months)}** ({len(detected_months)}ヶ月分を自動判別)")
 
     # ----------------------------------------------------
+    # ⚠️ 【新機能】未確定・要確認取引のプルダウン個別仕訳確定カード
+    # ----------------------------------------------------
+    unmatched_records = [r for r in records if not r.get("is_auto_matched", False)]
+    if unmatched_records:
+        st.warning(f"⚠️ **ルール未登録（新規店舗など）の取引が {len(unmatched_records)} 件 あります！**\n以下のプルダウンから正しい勘定科目とメモを選択・確定してください。")
+        for r in unmatched_records:
+            abs_amount = abs(r["amount"])
+            with st.expander(f"🔍 【科目を選択】 {r['date']} ｜ {r['summary']} ｜ ¥{abs_amount:,}（現在: {r['category']}）", expanded=True):
+                col_u1, col_u2, col_u3 = st.columns([2, 2, 1])
+                with col_u1:
+                    cat_options = company_conf["categories"]
+                    default_idx = cat_options.index(r["category"]) if r["category"] in cat_options else 0
+                    selected_new_cat = st.selectbox(
+                        "勘定科目を選択",
+                        cat_options,
+                        index=default_idx,
+                        key=f"cat_sel_{r['id']}"
+                    )
+                with col_u2:
+                    new_memo = st.text_input(
+                        "研究・業務メモ（任意）",
+                        value=r.get("research_memo", ""),
+                        placeholder="例: コミック演出調査・IP研究 / 企画打合せ",
+                        key=f"memo_inp_{r['id']}"
+                    )
+                with col_u3:
+                    st.write("")
+                    st.write("")
+                    if st.button("💾 この科目を確定", key=f"fix_btn_{r['id']}", use_container_width=True):
+                        r["category"] = selected_new_cat
+                        r["research_memo"] = new_memo
+                        r["is_auto_matched"] = True
+                        st.success(f"✅ {selected_new_cat} に更新しました！")
+                        st.rerun()
+
+    # ----------------------------------------------------
     # 🍽️ 飲食・会食検知行の自動表示（10,000円判定）
     # ----------------------------------------------------
     dining_candidates = [r for r in records if r["is_dining"]]
     if dining_candidates:
-        st.warning(f"🍽️ **会食・飲食の可能性がある取引が {len(dining_candidates)} 件 検出されました！**\n1人あたり10,000円基準で「会議費」か「交際費」かを自動判定します。税務署監査対策のためメモを入力してください。")
-        
+        st.markdown("### 🍽️ 会食・交際費 監査判定（1人あたり10,000円基準）")
         for r in dining_candidates:
             abs_amount = abs(r["amount"])
             with st.expander(f"📝 【要入力】 [{r['month']}] {r['date']} | {r['summary']} | ¥{abs_amount:,}", expanded=(r["dining_info"] is None)):
