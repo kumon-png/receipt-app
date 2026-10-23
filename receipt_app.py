@@ -21,7 +21,7 @@ USERS = {
 }
 
 # ==========================================
-# 2. 飲食・会食検知用キーワード（元帳実績）
+# 2. 飲食・会食検知用キーワード
 # ==========================================
 DINING_KEYWORDS = [
     "蹄", "野武士", "エスカイヤ", "すし辰", "くら寿司", "スシロー", "なか一", 
@@ -134,7 +134,7 @@ def get_drive_service():
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
-    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[1].lower() in valid_exts])
+    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[7].lower() in valid_exts])
 
 def sync_from_company_drive(folder_id, pool_dir):
     service = get_drive_service()
@@ -202,6 +202,18 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
     return service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
 
+def extract_month_from_filename_or_mtime(file_path):
+    """領収書ファイル名から日付（YYYYMMDD / YYYY-MM-DD）を抽出し、無ければファイルの更新年月を返す"""
+    base_name = os.path.basename(file_path)
+    # パターン1: YYYYMMDD または YYYY-MM-DD
+    match = re.search(r'(202[1, 4, 8-11])[-_]?([7][1, 4, 7-13])[-_]?([7, 12, 13][1, 4, 7-13])', base_name)
+    if match:
+        year, month = match.group(1), match.group(2)
+        return f"{year}-{month}"
+    # パターン2: ファイルの最終更新日時
+    mtime = os.path.getmtime(file_path)
+    return datetime.fromtimestamp(mtime).strftime("%Y-%m")
+
 # ==========================================
 # 5. PayPay明細パース ＆ 飲食・研究自動検知
 # ==========================================
@@ -239,11 +251,8 @@ def parse_paypay_csv(file_bytes, company_name):
             
             if date_val and amount != 0:
                 summary_lower = summary.lower()
-                
-                # 飲食・会食キーワード検知
                 is_dining = any(k.lower() in summary_lower for k in DINING_KEYWORDS)
                 
-                # SF企画向け研究開発日報自動メモ
                 auto_memo = ""
                 if company_name == "SF企画":
                     if any(k in summary_lower for k in ["google play", "app store", "apple"]):
@@ -253,8 +262,7 @@ def parse_paypay_csv(file_bytes, company_name):
                     elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square"]):
                         auto_memo = "[研究日報] AnimaCast：ゲーム内経済循環調査"
 
-                # 勘定科目の初期推定
-                category = conf["categories"][0] if conf["categories"] else "雑費"
+                category = conf["categories"] if conf["categories"] else "雑費"
                 sub_account = ""
                 tax_type = "課対仕入10%"
 
@@ -267,16 +275,18 @@ def parse_paypay_csv(file_bytes, company_name):
                             category, sub_account, tax_type = cat, sub_acc, t_type
                             break
 
+                clean_date = date_val[:10]
                 records.append({
                     "id": f"rec_{idx}",
-                    "date": date_val[:10],
+                    "date": clean_date,
+                    "month": clean_date[:7],
                     "amount": int(amount),
                     "summary": summary,
                     "category": category,
                     "sub_account": sub_account,
                     "tax_type": tax_type,
                     "is_dining": is_dining,
-                    "dining_info": None, # 人数・相手・目的
+                    "dining_info": None,
                     "research_memo": auto_memo
                 })
         return records
@@ -284,7 +294,7 @@ def parse_paypay_csv(file_bytes, company_name):
         st.error(f"PayPay銀行CSVの解析エラー: {e}")
         return []
 
-def generate_yayoi_csv(target_records, company_name):
+def generate_yayoi_csv_for_records(target_records, company_name):
     conf = COMPANY_CONFIG[company_name]
     lines = []
     for row in target_records:
@@ -358,30 +368,35 @@ with st.expander("☁️ Google ドライブから領収書を同期する", exp
 st.markdown("---")
 
 # ------------------------------------------
-# メイン処理：PayPay明細CSVアップロード ＆ 一括自動仕訳
+# メイン処理：PayPay明細CSVアップロード ＆ 複数月自動分割解析
 # ------------------------------------------
-col_top1, col_top2 = st.columns(2)
-with col_top1:
-    target_month = st.text_input("対象年月 (YYYY-MM)", value=datetime.now().strftime("%Y-%m"))
-with col_top2:
-    paypay_csv_file = st.file_uploader("① PayPay銀行 口座明細CSVをアップロード（一括読込）", type=["csv"])
+st.subheader("① PayPay銀行 口座明細CSVをアップロード（複数月混在可）")
+paypay_csv_file = st.file_uploader("PayPay明細CSVを選択してください（期間自由：例 8/1〜10/15）", type=["csv"])
 
-# セッション状態での取引データ保持
 if "transactions" not in st.session_state or st.session_state.get("last_company") != selected_company:
     st.session_state.transactions = []
     st.session_state.last_company = selected_company
 
 if paypay_csv_file:
-    # 新規読み込み時のみパース
     if not st.session_state.transactions:
         st.session_state.transactions = parse_paypay_csv(paypay_csv_file.read(), selected_company)
 
 if st.session_state.transactions:
     records = st.session_state.transactions
-    st.info(f"PayPay銀行明細: {len(records)} 件 を一括解析しました。")
+    
+    # 複数月の自動グルーピング
+    monthly_groups = {}
+    for r in records:
+        m = r["month"]
+        if m not in monthly_groups:
+            monthly_groups[m] = []
+        monthly_groups[m].append(r)
+    
+    detected_months = sorted(list(monthly_groups.keys()))
+    st.info(f"📊 明細解析完了: 合計 **{len(records)} 件** ｜ 検出月: **{', '.join(detected_months)}** ({len(detected_months)}ヶ月分を自動判別)")
 
     # ----------------------------------------------------
-    # 🍽️ 飲食・会食検知行の自動ポップアップ（要税務メモ入力）
+    # 🍽️ 飲食・会食検知行の自動表示
     # ----------------------------------------------------
     dining_candidates = [r for r in records if r["is_dining"]]
     if dining_candidates:
@@ -389,8 +404,8 @@ if st.session_state.transactions:
         
         for r in dining_candidates:
             abs_amount = abs(r["amount"])
-            with st.expander(f"📝 【要入力】 {r['date']} | {r['summary']} | ¥{abs_amount:,}", expanded=(r["dining_info"] is None)):
-                c_d1, c_d2 = st.columns([1, 2])
+            with st.expander(f"📝 【要入力】 [{r['month']}] {r['date']} | {r['summary']} | ¥{abs_amount:,}", expanded=(r["dining_info"] is None)):
+                c_d1, c_d2 = st.columns(2)
                 with c_d1:
                     people = st.number_input(f"参加人数 (合計)", min_value=1, value=2, step=1, key=f"p_{r['id']}")
                     unit_p = int(abs_amount / people)
@@ -415,7 +430,6 @@ if st.session_state.transactions:
                                 "partner": partner,
                                 "purpose": purpose
                             }
-                            # 判定結果に応じて勘定科目を書き換え
                             if selected_company == "SF企画":
                                 r["category"] = "② 会議費・接待交際費"
                             else:
@@ -423,7 +437,8 @@ if st.session_state.transactions:
                             st.success("✅ 税務メモを反映しました！")
                             st.rerun()
 
-    st.subheader("📋 自動仕訳 ＆ 判定結果プレビュー")
+    # プレビューテーブル
+    st.subheader("📋 月別自動仕訳プレビュー")
     preview_data = []
     for r in records:
         memo_str = r.get("research_memo", "")
@@ -431,6 +446,7 @@ if st.session_state.transactions:
             d = r["dining_info"]
             memo_str = f"[{d['judged_cat']}] {d['partner']} ({d['people']}名/単価¥{d['unit_price']:,})"
         preview_data.append({
+            "対象月": r["month"],
             "日付": r["date"],
             "金額": r["amount"],
             "摘要": r["summary"],
@@ -440,59 +456,94 @@ if st.session_state.transactions:
     st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
 
     st.markdown("---")
-    st.subheader(f"📥 弥生仕訳CSV出力 ＆ ④ Google Drive（{selected_company}経理くんデータ）月別自動移動")
+    st.subheader(f"📥 複数月一括：弥生仕訳CSV出力 ＆ ④ 各月Driveフォルダ自動配送")
 
-    yayoi_csv_str = generate_yayoi_csv(records, selected_company)
-    try:
-        yayoi_bytes = yayoi_csv_str.encode("cp932", errors="replace")
-    except Exception:
-        yayoi_bytes = yayoi_csv_str.encode("utf-8-sig")
+    # ダウンロード用タブ（月別）
+    dl_tabs = st.tabs([f"📥 {m} 弥生CSV" for m in detected_months])
+    for idx, m in enumerate(detected_months):
+        with dl_tabs[idx]:
+            m_records = monthly_groups[m]
+            m_csv_str = generate_yayoi_csv_for_records(m_records, selected_company)
+            try:
+                m_csv_bytes = m_csv_str.encode("cp932", errors="replace")
+            except Exception:
+                m_csv_bytes = m_csv_str.encode("utf-8-sig")
+            st.download_button(
+                label=f"📥 【{m}分】弥生仕訳CSVをダウンロード ({len(m_records)}件)",
+                data=m_csv_bytes,
+                file_name=f"弥生仕訳_{company_conf['code']}_{m}.csv",
+                mime="text/csv",
+                key=f"dl_{m}"
+            )
 
-    col_act1, col_act2 = st.columns(2)
-    with col_act1:
-        st.download_button(
-            label="📥 ③ 弥生会計仕訳CSVをダウンロード",
-            data=yayoi_bytes,
-            file_name=f"弥生仕訳_{company_conf['code']}_{target_month}.csv",
-            mime="text/csv"
-        )
-    
-    with col_act2:
-        if st.button("📁 ④ 指定Google Driveの月別フォルダへ自動保存・移動を実行"):
-            service = get_drive_service()
-            parent_id = current_output_folder_id
+    # Driveへの一括自動配送ボタン
+    if st.button("📁 ④ 複数月のGoogle Driveフォルダへ一括自動配送・保存を実行", type="primary", use_container_width=True):
+        service = get_drive_service()
+        parent_id = current_output_folder_id
 
-            if not service:
-                st.error("Google Drive API認証情報が見つかりません。")
-            else:
-                with st.spinner(f"Google Drive（{selected_company}経理くんデータ）内に「{target_month}」フォルダを作成し、データ保管中..."):
-                    try:
-                        month_folder_id = get_or_create_monthly_folder(service, parent_id, target_month)
-                        upload_file_to_drive(service, month_folder_id, f"弥生仕訳_{company_conf['code']}_{target_month}.csv", yayoi_bytes, "text/csv")
+        if not service:
+            st.error("Google Drive API認証情報が見つかりません。")
+        else:
+            with st.spinner(f"Google Drive（{selected_company}経理くんデータ）へ各月ごとに自動配送中..."):
+                try:
+                    summary_msg = []
+                    # 1. 口座仕訳CSVを各月フォルダへ保存
+                    for m in detected_months:
+                        m_records = monthly_groups[m]
+                        m_folder_id = get_or_create_monthly_folder(service, parent_id, m)
+                        m_csv_str = generate_yayoi_csv_for_records(m_records, selected_company)
+                        try:
+                            m_csv_bytes = m_csv_str.encode("cp932", errors="replace")
+                        except Exception:
+                            m_csv_bytes = m_csv_str.encode("utf-8-sig")
                         
-                        moved_count = 0
-                        for fname in get_pooled_files(DEFAULT_POOL_DIR):
-                            fpath = os.path.join(DEFAULT_POOL_DIR, fname)
-                            if os.path.isfile(fpath):
-                                with open(fpath, "rb") as rf:
-                                    mime = "application/pdf" if fname.lower().endswith(".pdf") else "image/jpeg"
-                                    upload_file_to_drive(service, month_folder_id, fname, rf.read(), mime)
-                                os.remove(fpath)
-                                moved_count += 1
+                        # 仕訳CSV保存
+                        upload_file_to_drive(service, m_folder_id, f"弥生仕訳_{company_conf['code']}_{m}.csv", m_csv_bytes, "text/csv")
                         
+                        # 実行ログ保存
                         log_text = (
                             f"【九門グループ経理消込・保管実行ログ】\n"
-                            f"対象会社: {selected_company}\n"
-                            f"対象年月: {target_month}\n"
+                            f"対象会社: {selected_company}\n対象月: {m}\n"
                             f"実行日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            f"処理仕訳件数: {len(records)} 件\n"
-                            f"月別Driveフォルダへ移動した領収書数: {moved_count} 件\n"
-                            f"出力先親フォルダID: {parent_id}\n"
+                            f"処理仕訳件数: {len(m_records)} 件\n"
                         )
-                        upload_file_to_drive(service, month_folder_id, f"消込実行ログ_{target_month}.txt", log_text.encode("utf-8"), "text/plain")
+                        upload_file_to_drive(service, m_folder_id, f"消込実行ログ_{m}.txt", log_text.encode("utf-8"), "text/plain")
+                        summary_msg.append(f"📁 **{m}** フォルダ: 仕訳CSV ({len(m_records)}件) 格納")
 
-                        st.success(f"🎉 処理完了！\nGoogle Drive『{selected_company}経理くんデータ』内の「{target_month}」フォルダに、仕訳CSV・領収書（{moved_count}件）・消込ログを自動移動・保存しました！")
-                        st.session_state.transactions = [] # リセット
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Google Drive保存エラー: {str(e)}")
+                    # 2. receipt_pool内の領収書ファイルを月別に自動振り分け移動
+                    pooled_files = get_pooled_files(DEFAULT_POOL_DIR)
+                    receipt_dist_count = {m: 0 for m in detected_months}
+                    unclassified_count = 0
+
+                    # 複数月のDriveフォルダIDマップを事前取得
+                    m_folder_ids = {m: get_or_create_monthly_folder(service, parent_id, m) for m in detected_months}
+
+                    for fname in pooled_files:
+                        fpath = os.path.join(DEFAULT_POOL_DIR, fname)
+                        if os.path.isfile(fpath):
+                            f_month = extract_month_from_filename_or_mtime(fpath)
+                            # 検出された月に一致すればそのフォルダへ、一致しなければ最新月へ
+                            target_m = f_month if f_month in m_folder_ids else detected_months[-1]
+                            target_fid = m_folder_ids[target_m]
+                            
+                            mime = "application/pdf" if fname.lower().endswith(".pdf") else "image/jpeg"
+                            with open(fpath, "rb") as rf:
+                                upload_file_to_drive(service, target_fid, fname, rf.read(), mime)
+                            os.remove(fpath) # poolから安全に移動完了
+                            
+                            if f_month in receipt_dist_count:
+                                receipt_dist_count[f_month] += 1
+                            else:
+                                unclassified_count += 1
+
+                    for m, cnt in receipt_dist_count.items():
+                        if cnt > 0:
+                            summary_msg.append(f"📎 **{m}** フォルダ: 領収書 {cnt} 件 移動完了")
+                    if unclassified_count > 0:
+                        summary_msg.append(f"📎 最新月フォルダへ保管された証憑: {unclassified_count} 件")
+
+                    st.success("🎉 全処理完了！複数月の仕訳CSVおよび領収書を各Drive月別フォルダへ自動仕分け・移動しました！\n\n" + "\n".join(summary_msg))
+                    st.session_state.transactions = []
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Google Drive一括保存エラー: {str(e)}")
