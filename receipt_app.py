@@ -41,7 +41,6 @@ USERS = {
 # ==========================================
 # 2. 九門グループ 3社合同 統合キーワード辞書データベース
 # ==========================================
-# 飲食・会食キーワード（交際費 / 会議費）
 COMMON_DINING_KEYWORDS = [
     "蹄", "野武士", "エスカイヤ", "すし辰", "くら寿司", "スシロー", "なか一", 
     "アンデルセン", "ふるさと", "焼肉", "寿司", "居酒屋", "バル", "カフェ", 
@@ -49,7 +48,6 @@ COMMON_DINING_KEYWORDS = [
     "バー", "bar", "はき溜め", "はき駄め", "スタンドクラブ", "餃子家龍", "鳥貴族"
 ]
 
-# 3社合同・統合仕訳ルール（どの法人でも共通して適用されるナレッジベース）
 GROUP_UNIFIED_KEYWORD_RULES = [
     # 1. 研究開発・コンテンツ検証・ゲーム経済（AnimaCast Core IP）
     (["スクウェア", "スクエニ", "ｽｸｳｴｱ", "square enix", "ドラクエ", "任天堂", "nintendo", "steam", "プレイステーション", "ps store"], 
@@ -79,7 +77,7 @@ GROUP_UNIFIED_KEYWORD_RULES = [
     (["wannaeat", "ワナイート", "a-price", "食材"], 
      "仕入高（8%軽）", "仕入高（8%軽）", "課対仕入8%(軽)", ""),
 
-    # 7. 外注・専門工事（施工パートナー）
+    # 7. 外注・専門工事
     (["ケーティーエス", "kts", "鳥取通信", "ベッセル", "エルワイコンサル", "アイデン", "ミカモ電気", "アルテック", "awc"], 
      "外注費", "外注費", "課対仕入10%", ""),
 
@@ -88,7 +86,6 @@ GROUP_UNIFIED_KEYWORD_RULES = [
      "支払手数料", "⑥ 支払手数料・租税公課", "課対仕入10%", "")
 ]
 
-# 入金専用科目
 INCOME_CATEGORIES = ["売上高", "売掛金", "雑収入", "短期借入金（代表立替戻入）", "預り金"]
 
 # ==========================================
@@ -235,15 +232,6 @@ def sync_from_company_drive(folder_id, pool_dir):
     except Exception as e:
         return False, f"同期エラー: {str(e)}"
 
-def get_or_create_monthly_folder(service, parent_folder_id, target_month):
-    query = f"'{parent_folder_id}' in parents and name = '{target_month}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    res = service.files().list(q=query, fields="files(id, name)", spaces='drive').execute()
-    files = res.get('files', [])
-    if files: return files['id']
-    folder_metadata = {'name': target_month, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
-    folder = service.files().create(body=folder_metadata, fields='id').execute()
-    return folder.get('id')
-
 def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
     file_metadata = {'name': file_name, 'parents': [folder_id]}
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
@@ -253,7 +241,6 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
 # 5. 3社合同マスタによる口座明細自動分類エンジン
 # ==========================================
 def match_unified_category(summary_text, target_company, is_income):
-    """3社合同の統合ナレッジマスタから最適な勘定科目をマッチング"""
     summary_lower = summary_text.lower()
     comp_conf = COMPANY_CONFIG[target_company]
     is_sf = (target_company == "SF企画")
@@ -263,27 +250,19 @@ def match_unified_category(summary_text, target_company, is_income):
             return "受取利息", "", "非課売上", True, ""
         return "売上高", "", "課税売上10%", True, ""
 
-    # 会食・飲食判定
     if any(k.lower() in summary_lower for k in COMMON_DINING_KEYWORDS):
         cat = "② 会議費・接待交際費" if is_sf else "交際費"
         return cat, "", "課対仕入10%", True, ""
 
-    # 合同キーワード辞書ループ
     for keywords, standard_cat, sf_cat, tax_type, memo in GROUP_UNIFIED_KEYWORD_RULES:
         for kw in keywords:
             if kw.lower() in summary_lower:
                 chosen_cat = sf_cat if is_sf else standard_cat
-                # 該当法人の科目体系に存在するか安全確認
                 if chosen_cat not in comp_conf["expense_categories"]:
-                    # 近似またはデフォルトへ
-                    if is_sf:
-                        chosen_cat = "⑤ 調査研究費・消耗品費"
-                    else:
-                        chosen_cat = safe_first_str(comp_conf["expense_categories"], "雑費")
+                    chosen_cat = "⑤ 調査研究費・消耗品費" if is_sf else safe_first_str(comp_conf["expense_categories"], "雑費")
                 return chosen_cat, "", tax_type, True, memo
 
-    # デフォルト
-    default_cat = comp_conf["expense_categories"][-1] # 雑費
+    default_cat = comp_conf["expense_categories"][-1]
     return default_cat, "", "課対仕入10%", False, ""
 
 def parse_paypay_pdf_unified(file_bytes, target_company):
@@ -334,9 +313,8 @@ def parse_paypay_pdf_unified(file_bytes, target_company):
                     summary = re.sub(r'[\|\s]+$', '', summary)
                     summary_lower = summary.lower()
 
-                    # 入出金判定
                     is_income = False
-                    if len(amounts) >= 2 and amounts == amounts[1]:
+                    if len(amounts) >= 2 and amounts == amounts:
                         is_income = True
                         amount = amounts
                     elif any(k in summary_lower for k in ["振込", "お利息", "利息", "入金"]):
@@ -477,15 +455,12 @@ def generate_yayoi_csv_for_records(target_records, company_name):
 
         summary_text = f"{base_summary} {' '.join(memo_parts)}".strip()
 
-        # 入金取引 vs 出金取引の貸借振り分け
         if row.get("is_income", False):
-            # 借方：預金 / 貸方：売上科目
             cols = [
                 "2000", "", "", date_str, bank_subj, bank_sub, "全社", "対象外", amount, "0",
                 target_subj, target_sub, "全社", tax_type, amount, "0", summary_text, "", "", "NO"
             ]
         else:
-            # 借方：費用科目 / 貸方：預金
             cols = [
                 "2000", "", "", date_str, target_subj, target_sub, "全社", tax_type, amount, "0",
                 bank_subj, bank_sub, "全社", "対象外", amount, "0", summary_text, "", "", "NO"
@@ -499,15 +474,25 @@ def generate_yayoi_csv_for_records(target_records, company_name):
 # ==========================================
 st.set_page_config(page_title="九門グループ 統合経理・消込＆証憑管理", layout="wide")
 
+# CSSでセレクトボックス等のフォントサイズと余白を最適化
+st.markdown("""
+<style>
+div[data-baseweb="select"] {
+    font-size: 16px !important;
+}
+.stSelectbox label {
+    font-size: 14px !important;
+    font-weight: bold !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.sidebar.title("🏢 経理くん（統括参謀）")
 current_user_email = st.sidebar.selectbox("操作者", list(USERS.keys()), format_func=lambda x: USERS[x]["name"])
-
-# 会計の対象企業を画面上部/サイドバーで一本化
 target_company = st.sidebar.selectbox("🏢 処理対象の会社（会計主体）", USERS[current_user_email]["companies"])
 
 company_conf = COMPANY_CONFIG[target_company]
-st.sidebar.markdown(f"**口座:** `{company_conf['default_payment']}`")
-st.sidebar.markdown(f"**Drive出力親フォルダ:**\n`{company_conf['output_folder_id']}`")
+st.sidebar.markdown(f"**標準口座:** `{company_conf['default_payment']}`")
 
 with st.sidebar.expander("🔑 Google Drive API連携キー設定"):
     custom_token = st.text_area("GOOGLE_TOKEN (JSON文字列)", value="", help="token.jsonの内容を貼り付けるとDrive同期・自動保管が有効化されます。")
@@ -545,7 +530,7 @@ with main_tab_receipt:
         st.success(f"🎯 未処理の領収書: **残り {len(pooled_files)} 件**")
         target_file = pooled_files
         target_path = os.path.join(DEFAULT_POOL_DIR, target_file)
-        ext = os.path.splitext(target_file)[1].lower()
+        ext = os.path.splitext(target_file).lower()
 
         c_view, c_form = st.columns([1.2, 1])
         with c_view:
@@ -599,7 +584,7 @@ with main_tab_receipt:
 # ------------------------------------------
 with main_tab_bank:
     st.subheader(f"🏦 PayPay銀行 口座明細投入（会計主体: {target_company}）")
-    st.caption(f"指定口座: `{company_conf['default_payment']}` の取引明細を3社合同マスタで自動消込します")
+    st.caption(f"指定口座: `{company_conf['default_payment']}` の取引明細を自動消込します")
 
     uploaded_statement = st.file_uploader(
         f"{target_company} の取引明細ファイル（PDF または CSV）を選択してください",
@@ -634,7 +619,7 @@ with main_tab_bank:
         st.success(f"📊 明細解析完了: 合計 **{len(records)} 件** ｜ 【{target_company}】の取引として自動分類済")
 
         # ----------------------------------------------------
-        # 仕訳調整テーブル（帰属会社カラムを排除・科目とメモのみに集約）
+        # 💡 【改善】2段レイアウトによる勘定科目ワイド表示テーブル
         # ----------------------------------------------------
         st.subheader("② 勘定科目・税務メモの確認・調整")
         for r in records:
@@ -642,22 +627,33 @@ with main_tab_bank:
             type_label = "💰【入金/売上】" if r.get("is_income") else "💸【出金/経費】"
 
             with st.expander(f"{type_label} {r['date']} ｜ {r['summary']} ｜ ¥{abs_amt:,} ｜ 科目: {r['category']}", expanded=not r.get("is_auto_matched", False)):
-                col1, col2, col3 = st.columns([1, 17, 18])
+                
+                # 【上段・1段目】：勘定科目を全幅ワイド表示（見切れ防止）
+                if r.get("is_income"):
+                    cat_options = INCOME_CATEGORIES
+                else:
+                    cat_options = company_conf["expense_categories"]
 
-                with col1:
-                    # 入金 vs 出金で適切な科目候補を表示
-                    if r.get("is_income"):
-                        cat_options = INCOME_CATEGORIES
-                    else:
-                        cat_options = company_conf["expense_categories"]
+                cur_cat_idx = cat_options.index(r["category"]) if r["category"] in cat_options else 0
+                r["category"] = st.selectbox(
+                    "📌 勘定科目（正式名称）", 
+                    cat_options, 
+                    index=cur_cat_idx, 
+                    key=f"cat_{r['id']}",
+                    help="選択した科目がそのまま弥生会計の仕訳科目として登録されます。"
+                )
 
-                    cur_cat_idx = cat_options.index(r["category"]) if r["category"] in cat_options else 0
-                    r["category"] = st.selectbox("勘定科目", cat_options, index=cur_cat_idx, key=f"cat_{r['id']}")
+                # 【下段・2段目】：業務メモ（幅広） ＋ 確定ボタン
+                col_m1, col_m2 = st.columns([5, 1])
+                with col_m1:
+                    r["research_memo"] = st.text_input(
+                        "📝 業務・税務メモ（研究内容・打合せ相手など）", 
+                        value=r.get("research_memo", ""), 
+                        key=f"memo_{r['id']}",
+                        placeholder="例: [研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"
+                    )
 
-                with col2:
-                    r["research_memo"] = st.text_input("業務・税務メモ（取引先・打合せ目的など）", value=r.get("research_memo", ""), key=f"memo_{r['id']}")
-
-                with col3:
+                with col_m2:
                     st.write("")
                     st.write("")
                     if st.button("確定", key=f"ok_{r['id']}", use_container_width=True):
