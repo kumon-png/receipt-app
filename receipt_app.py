@@ -84,7 +84,7 @@ UNIFIED_ALL_CATEGORIES = [
 # 3. 九門グループ 3社合同 高度自動仕訳マッチングルール
 # ==========================================
 AUTO_MATCH_RULES = [
-    # --- ご指定の追加個別ルール（優先適用） ---
+    # --- 個別優先ルール ---
     # ① Akari cafe 宇品 → 広告宣伝費（toridoriマーケティング）
     (["akari cafe", "akaricafe", "アカリカフェ", "あかりカフェ"], 
      "広告宣伝費", "課対仕入10%", "[販促] toridoriマーケティング（Akari cafe宇品）"),
@@ -257,7 +257,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
         ).execute()
         files = results.get('files', [])
         if files:
-            return files['id']
+            return files[0]['id']
 
         folder_metadata = {
             'name': target_month,
@@ -330,7 +330,6 @@ def sync_from_company_drive(folder_id, pool_dir):
 # 6. 超自動仕訳マッチング判定エンジン
 # ==========================================
 def match_intelligent_category(summary_text, is_income):
-    # 全角英数・スペースの正規化
     summary_norm = summary_text.replace("　", " ").strip()
     summary_lower = summary_norm.lower()
 
@@ -341,7 +340,6 @@ def match_intelligent_category(summary_text, is_income):
             return "役員借入金（代表立替・借入）", "対象外", True, "代表立替・役員借入金戻入"
         return "売上高", "課税売上10%", True, "売上高・売掛金回収入金"
 
-    # 出金取引の辞書マッチング（Akari cafe, リビング・ユー, フレスタ, リパーク等を完全判定）
     for keywords, category, tax_type, memo in AUTO_MATCH_RULES:
         for kw in keywords:
             if kw.lower() in summary_lower:
@@ -398,15 +396,15 @@ def parse_paypay_pdf_intelligent(file_bytes, target_company):
                     summary_lower = summary.lower()
 
                     is_income = False
-                    if len(amounts) >= 2 and amounts == amounts[8]:
+                    if len(amounts) >= 2 and amounts[0] == amounts[1]:
                         is_income = True
-                        amount = amounts
+                        amount = amounts[0]
                     elif any(k in summary_lower for k in ["振込", "お利息", "利息", "入金"]):
                         is_income = True
-                        amount = amounts
+                        amount = amounts[0]
                     else:
                         is_income = False
-                        amount = -amounts
+                        amount = -amounts[0]
 
                     if not summary:
                         summary = "PayPay銀行入金" if is_income else "PayPay銀行出金"
@@ -609,9 +607,9 @@ with main_tab_receipt:
         st.info("💡 現在未処理プール（receipt_pool）に未処理の領収書はありません。")
     else:
         st.success(f"🎯 未処理の領収書: **残り {len(pooled_files)} 件**")
-        target_file = pooled_files
+        target_file = pooled_files[0]
         target_path = os.path.join(DEFAULT_POOL_DIR, target_file)
-        ext = os.path.splitext(target_file)[8].lower()
+        ext = os.path.splitext(target_file)[1].lower()
 
         c_view, c_form = st.columns([1.2, 1])
         with c_view:
@@ -636,7 +634,7 @@ with main_tab_receipt:
             st.markdown("### 📝 領収書の内容を確認して登録")
             with st.form("manual_receipt_form"):
                 rec_date = st.date_input("領収書日付", value=date.today())
-                store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file))
+                store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file)[0])
 
                 sel_cat = st.selectbox("勘定科目（全社共通マスター）", UNIFIED_ALL_CATEGORIES, index=UNIFIED_ALL_CATEGORIES.index("消耗品費"))
                 sel_pay = st.selectbox("決済手段", list(company_conf["payment_mapping"].keys()))
@@ -721,7 +719,7 @@ with main_tab_bank:
                 )
 
                 # 【下段・2段目】：業務メモ（幅広83%） ＋ 確定ボタン（17%）
-                col_m1, col_m2 = st.columns([8, 9])
+                col_m1, col_m2 = st.columns([5, 1])
                 with col_m1:
                     r["research_memo"] = st.text_input(
                         "📝 業務・税務メモ（取引先・打合せ目的・研究内容など）", 
@@ -754,12 +752,13 @@ with main_tab_bank:
         st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
 
         # ----------------------------------------------------
-        # 月別フォルダ自動生成 ＆ Drive保管
+        # 月別フォルダ自動生成 ＆ Drive保管（型安全修正済）
         # ----------------------------------------------------
         st.markdown("---")
         st.subheader(f"③ 【{target_company}】弥生仕訳CSV出力 ＆ 月別Drive自動保管")
 
-        target_month_str = records["month"] if records else datetime.now().strftime("%Y-%m")
+        # リストの先頭レコードから月を取得（安全ガード）
+        target_month_str = records[0].get("month", datetime.now().strftime("%Y-%m")) if (records and isinstance(records[0], dict)) else datetime.now().strftime("%Y-%m")
         st.caption(f"📁 保存先: `{target_company}` 親フォルダID: `{company_conf['output_folder_id']}` ＞ **【 `{target_month_str}` 】サブフォルダ**（自動生成）")
 
         csv_str = generate_yayoi_csv_for_records(records, target_company)
