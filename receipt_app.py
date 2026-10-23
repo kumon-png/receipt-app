@@ -8,6 +8,7 @@ import re
 from datetime import datetime, date
 from PIL import Image
 
+# PDF解析ライブラリ
 try:
     from pypdf import PdfReader
     HAS_PYPDF = True
@@ -24,7 +25,7 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 # ==========================================
 def safe_first_str(val, fallback=""):
     if isinstance(val, (list, tuple)):
-        return str(val[0]) if len(val) > 0 else fallback
+        return str(val) if len(val) > 0 else fallback
     if val is None:
         return fallback
     return str(val)
@@ -43,20 +44,20 @@ USERS = {
 # 2. 九門グループ 3社完全共通 網羅勘定科目マスター
 # ==========================================
 UNIFIED_ALL_CATEGORIES = [
-    # --- 売上・入金・回収系 ---
+    # 売上・入金系
     "売上高",
     "売掛金",
     "雑収入",
     "受取利息",
     "役員借入金（代表立替・借入）",
     
-    # --- 原価・仕入・外注系 ---
+    # 原価・仕入・外注系
     "外注費",
     "買掛金",
     "仕入高（10%）",
     "仕入高（8%軽）",
     
-    # --- 営業・販売促進・研究系 ---
+    # 営業・販促・研究系
     "広告宣伝費",
     "調査研究費（AnimaCast等）",
     "旅費交通費",
@@ -67,7 +68,7 @@ UNIFIED_ALL_CATEGORIES = [
     "通信費",
     "車両費",
     
-    # --- 管理・施設・公課・その他 ---
+    # 管理・施設・公課
     "地代家賃",
     "水道光熱費",
     "支払手数料",
@@ -85,83 +86,28 @@ UNIFIED_ALL_CATEGORIES = [
 # 3. 九門グループ 3社合同 高度自動仕訳マッチングルール
 # ==========================================
 AUTO_MATCH_RULES = [
-    # ① Akari cafe 宇品 → 広告宣伝費（toridoriマーケティング）
-    (["akari cafe", "akaricafe", "アカリカフェ", "あかりカフェ"], 
-     "広告宣伝費", "課対仕入10%", "[販促] toridoriマーケティング（Akari cafe宇品）"),
-
-    # ② リビング・ユー → 交際費
-    (["リビング・ユー", "リビングユー", "living you"], 
-     "交際費", "課対仕入10%", "[会食交際] リビング・ユー 取引先打合せ"),
-
-    # ③ フレスタ → 仕入高（10%） メモ（アカリカフェ材料費）
-    (["フレスタ", "fresta"], 
-     "仕入高（10%）", "課対仕入10%", "アカリカフェ材料費"),
-
-    # ④ MITSUINOREPARK / 三井のリパーク → 旅費交通費 メモ（駐車代金）
-    (["mitsuinorepark", "mitsuino repark", "三井のリパーク", "リパーク"], 
-     "旅費交通費", "課対仕入10%", "[交通費] 駐車代金（三井のリパーク）"),
-
-    # 広告宣伝費
-    (["タベログ", "tabelog", "indeed", "インディード", "tjhiroshima", "アドプレックス", "facebook ads", "google ads", "広告"], 
-     "広告宣伝費", "課対仕入10%", "[販促] 広告宣伝掲載費"),
-
-    # 調査研究費（AnimaCast Core IP・ゲーム経済・先端API）
-    (["スクウェア", "スクエニ", "ｽｸｳｴｱ", "square enix", "ドラクエ", "任天堂", "nintendo", "steam", "プレイステーション", "ps store"], 
-     "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"),
-    (["google play", "app store", "apple"], 
-     "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：アプリ課金API・決済UI検証"),
-    (["u-next", "netflix", "プライムビデオ"], 
-     "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] 映像ストリーミング・配信UI/UX検証"),
-
-    # 交際費（接待・取引先会食）
-    (["蹄", "hizume", "はき溜め", "はき駄め", "野武士", "nobushi", "エスカイヤ", "esquire", "ふるさと", "西海", "saikai", 
-      "かに道楽", "右コン", "とり八", "串カツ田中", "麻ノ葉", "蜂ヤ", "四十", "denuke", "心屋", "すずらん"], 
-     "交際費", "課対仕入10%", "[会食交際] 取引先・アライアンス打合せ"),
-
-    # 会議費（打合せ・軽食）
-    (["すし辰", "sushitatsu", "くら寿司", "kura sushi", "スシロー", "sushiro", "アンデルセン", "ロイヤルホスト", 
-      "royalhost", "ゆず庵", "サイゼリヤ", "スターバックス", "ドトール", "珈琲", "カフェ", "電光石火", "ガスト", "ジョイフル"], 
-     "会議費", "課対仕入10%", "[社内・社外会議] 業務打合せ・飲食代"),
-
-    # 通信費（クラウド・IT・通信）
-    (["サイボウズ", "cybozu", "adobe", "アドビ", "マイクロソフト", "msft", "microsoft", "ドコモ", "docomo", 
-      "楽天モバイル", "rakuten mobile", "チュピコム", "usen music", "ミライ工事", "ソウルウェア", "canva", "オートデスク", "autodesk"], 
-     "通信費", "課対仕入10%", ""),
-
-    # 消耗品費（資材・工具・事務用品）
-    (["アマゾン", "amazon", "コーナン", "kohnan", "モノタロウ", "monotaro", "建デポ", "kendepo", "西村ジョイ", 
-      "セリア", "seria", "ヨドバシ", "エディオン", "edion", "ニトリ", "nitori", "ジュンテンドー", "コメリ", "ナフコ", "ユニットコム"], 
-     "消耗品費", "課対仕入10%", ""),
-
-    # 旅費交通費（新幹線・宿泊・タクシー・駐車場）
-    (["jr", "西日本旅客鉄道", "東海旅客鉄道", "東日本旅客鉄道", "新幹線", "楽天トラベル", "rakuten travel", 
-      "ホテル", "hotel", "タイムズ", "times", "グリーンパーク", "スカイパーク", 
-      "タクシー", "taxi", "瀬戸内海汽船", "汽船", "高速情報協同組合"], 
-     "旅費交通費", "課対仕入10%", ""),
-
-    # 車両費（燃料・車検・整備）
-    (["キユウユダイ", "給油", "eneos", "エネオス", "アポロステーション", "apollostation", "タイヤ館", "スズキ自販", "車検"], 
-     "車両費", "課対仕入10%", ""),
-
-    # 食材仕入（シュガー店舗等）
-    (["wannaeat", "ワナイート", "a-price", "大黒天物産", "食材"], 
-     "仕入高（8%軽）", "課対仕入8%(軽)", ""),
-
-    # 外注費（主要施工・開発パートナーへの振込）
-    (["ケーティーエス", "kts", "鳥取通信", "ベッセル", "エルワイコンサル", "アイデン", "ミカモ電気", "アルテック", "awc", "アイ・リンク"], 
-     "外注費", "課対仕入10%", ""),
-
-    # 支払手数料（振込手数料・公課）
-    (["振込手数料", "手数料", "全厚済"], 
-     "支払手数料", "課対仕入10%", ""),
-
-    # 保険料
-    (["sompo", "損保ジャパン", "ビジネスセイト", "火災保険"], 
-     "保険料", "対象外", "")
+    (["akari cafe", "akaricafe", "アカリカフェ", "あかりカフェ"], "広告宣伝費", "課対仕入10%", "[販促] toridoriマーケティング（Akari cafe宇品）"),
+    (["リビング・ユー", "リビングユー", "living you"], "交際費", "課対仕入10%", "[会食交際] リビング・ユー 取引先打合せ"),
+    (["フレスタ", "fresta"], "仕入高（10%）", "課対仕入10%", "アカリカフェ材料費"),
+    (["mitsuinorepark", "mitsuino repark", "三井のリパーク", "リパーク"], "旅費交通費", "課対仕入10%", "[交通費] 駐車代金（三井のリパーク）"),
+    (["タベログ", "tabelog", "indeed", "インディード", "tjhiroshima", "アドプレックス", "facebook ads", "google ads", "広告"], "広告宣伝費", "課対仕入10%", "[販促] 広告宣伝掲載費"),
+    (["スクウェア", "スクエニ", "ｽｸｳｴｱ", "square enix", "ドラクエ", "任天堂", "nintendo", "steam", "プレイステーション", "ps store"], "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"),
+    (["google play", "app store", "apple"], "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：アプリ課金API・決済UI検証"),
+    (["u-next", "netflix", "プライムビデオ"], "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] 映像ストリーミング・配信UI/UX検証"),
+    (["蹄", "hizume", "はき溜め", "はき駄め", "野武士", "nobushi", "エスカイヤ", "esquire", "ふるさと", "西海", "saikai", "かに道楽", "右コン", "とり八", "串カツ田中", "麻ノ葉", "蜂ヤ", "四十", "denuke", "心屋", "すずらん"], "交際費", "課対仕入10%", "[会食交際] 取引先・アライアンス打合せ"),
+    (["すし辰", "sushitatsu", "くら寿司", "kura sushi", "スシロー", "sushiro", "アンデルセン", "ロイヤルホスト", "royalhost", "ゆず庵", "サイゼリヤ", "スターバックス", "ドトール", "珈琲", "カフェ", "電光石火", "ガスト", "ジョイフル"], "会議費", "課対仕入10%", "[社内・社外会議] 業務打合せ・飲食代"),
+    (["サイボウズ", "cybozu", "adobe", "アドビ", "マイクロソフト", "msft", "microsoft", "ドコモ", "docomo", "楽天モバイル", "rakuten mobile", "チュピコム", "usen music", "ミライ工事", "ソウルウェア", "canva", "オートデスク", "autodesk"], "通信費", "課対仕入10%", ""),
+    (["アマゾン", "amazon", "コーナン", "kohnan", "モノタロウ", "monotaro", "建デポ", "kendepo", "西村ジョイ", "セリア", "seria", "ヨドバシ", "エディオン", "edion", "ニトリ", "nitori", "ジュンテンドー", "コメリ", "ナフコ", "ユニットコム"], "消耗品費", "課対仕入10%", ""),
+    (["jr", "西日本旅客鉄道", "東海旅客鉄道", "東日本旅客鉄道", "新幹線", "楽天トラベル", "rakuten travel", "ホテル", "hotel", "タイムズ", "times", "グリーンパーク", "スカイパーク", "タクシー", "taxi", "瀬戸内海汽船", "汽船", "高速情報協同組合"], "旅費交通費", "課対仕入10%", ""),
+    (["キユウユダイ", "給油", "eneos", "エネオス", "アポロステーション", "apollostation", "タイヤ館", "スズキ自販", "車検"], "車両費", "課対仕入10%", ""),
+    (["wannaeat", "ワナイート", "a-price", "大黒天物産", "食材"], "仕入高（8%軽）", "課対仕入8%(軽)", ""),
+    (["ケーティーエス", "kts", "鳥取通信", "ベッセル", "エルワイコンサル", "アイデン", "ミカモ電気", "アルテック", "awc", "アイ・リンク"], "外注費", "課対仕入10%", ""),
+    (["振込手数料", "手数料", "全厚済"], "支払手数料", "課対仕入10%", ""),
+    (["sompo", "損保ジャパン", "ビジネスセイト", "火災保険"], "保険料", "対象外", "")
 ]
 
 # ==========================================
-# 4. 法人別 設定マスタ（確定DriveフォルダID同期済）
+# 4. 法人別 設定マスタ
 # ==========================================
 COMPANY_CONFIG = {
     "ナインゲイツ": {
@@ -220,14 +166,13 @@ os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
 
 # ==========================================
-# 5. Google Drive API 関数（サービスアカウント＆Secrets完全両対応）
+# 5. Google Drive API 関数
 # ==========================================
 def get_drive_service():
     scopes = ['[suspicious link removed]']
     creds = None
     auth_source = None
 
-    # 1. サービスアカウント認証（最優先・完全自動）
     if "GOOGLE_SERVICE_ACCOUNT" in st.secrets:
         try:
             sa_info = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
@@ -237,7 +182,6 @@ def get_drive_service():
         except Exception:
             creds = None
 
-    # 2. token.json の自動読込
     if not creds and os.path.exists('token.json'):
         try:
             creds = Credentials.from_authorized_user_file('token.json', scopes)
@@ -245,7 +189,6 @@ def get_drive_service():
         except Exception:
             creds = None
 
-    # 3. Streamlit Secrets (GOOGLE_TOKEN)
     if not creds and "GOOGLE_TOKEN" in st.secrets:
         try:
             token_val = st.secrets["GOOGLE_TOKEN"]
@@ -255,21 +198,11 @@ def get_drive_service():
         except Exception:
             creds = None
 
-    # 4. 手動入力セッショントークン
-    if not creds and "custom_google_token" in st.session_state and st.session_state.custom_google_token:
-        try:
-            token_info = json.loads(st.session_state.custom_google_token)
-            creds = Credentials.from_authorized_user_info(token_info, scopes)
-            auth_source = "セッション手動入力"
-        except Exception:
-            creds = None
-
     if creds:
         return build('drive', 'v3', credentials=creds), auth_source
     return None, None
 
 def get_or_create_monthly_folder(service, parent_folder_id, target_month):
-    """親フォルダ内に 'YYYY-MM' フォルダを検索・自動作成"""
     try:
         query = f"'{parent_folder_id}' in parents and name = '{target_month}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         results = service.files().list(
@@ -281,7 +214,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
         ).execute()
         files = results.get('files', [])
         if files:
-            return files[0]['id']
+            return files['id']
 
         folder_metadata = {
             'name': target_month,
@@ -310,7 +243,7 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
-    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[1].lower() in valid_exts])
+    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f).lower() in valid_exts])
 
 def sync_from_company_drive(folder_id, pool_dir):
     service, _ = get_drive_service()
@@ -371,9 +304,32 @@ def match_intelligent_category(summary_text, is_income):
 
     return "雑費", "課対仕入10%", False, ""
 
+def extract_text_from_pdf_bytes(file_bytes):
+    """pypdf または正規表現フォールバックでPDF内テキストを抽出"""
+    text = ""
+    if HAS_PYPDF:
+        try:
+            reader = PdfReader(io.BytesIO(file_bytes))
+            for page in reader.pages:
+                t = page.extract_text()
+                if t: text += t + "\n"
+        except Exception:
+            pass
+
+    # フォールバック（プレーンテキスト検索）
+    if not text.strip():
+        try:
+            raw_s = file_bytes.decode("utf-8", errors="ignore")
+            # PDFストリーム内の生テキスト行を抽出
+            text = "\n".join(re.findall(r'[202\d]{4}[/-]\d{1,2}[/-]\d{1,2}.*', raw_s))
+        except Exception:
+            pass
+    return text
+
 def parse_paypay_pdf_intelligent(file_bytes, target_company):
-    if not HAS_PYPDF:
-        st.error("⚠️ サーバー環境に `pypdf` がインストールされていません。")
+    raw_text = extract_text_from_pdf_bytes(file_bytes)
+    if not raw_text.strip():
+        st.warning("⚠️ PDFからテキストを抽出できませんでした。スキャン画像PDFの場合は、CSVアップロードまたはテキスト直接貼り付けをお試しください。")
         return []
 
     records = []
@@ -381,12 +337,6 @@ def parse_paypay_pdf_intelligent(file_bytes, target_company):
     default_pay = comp_conf["default_payment"]
 
     try:
-        reader = PdfReader(io.BytesIO(file_bytes))
-        raw_text = ""
-        for page in reader.pages:
-            t = page.extract_text()
-            if t: raw_text += t + "\n"
-
         cleaned_text = re.sub(r'(\d+),\s+(\d+)', r'\1,\2', raw_text)
         lines = [l.strip() for l in cleaned_text.split("\n") if l.strip()]
 
@@ -420,15 +370,15 @@ def parse_paypay_pdf_intelligent(file_bytes, target_company):
                     summary_lower = summary.lower()
 
                     is_income = False
-                    if len(amounts) >= 2 and amounts[0] == amounts[1]:
+                    if len(amounts) >= 2 and amounts == amounts:
                         is_income = True
-                        amount = amounts[0]
+                        amount = amounts
                     elif any(k in summary_lower for k in ["振込", "お利息", "利息", "入金"]):
                         is_income = True
-                        amount = amounts[0]
+                        amount = amounts
                     else:
                         is_income = False
-                        amount = -amounts[0]
+                        amount = -amounts
 
                     if not summary:
                         summary = "PayPay銀行入金" if is_income else "PayPay銀行出金"
@@ -578,18 +528,6 @@ def generate_yayoi_csv_for_records(target_records, company_name):
 # ==========================================
 st.set_page_config(page_title="九門グループ 統合経理・消込＆証憑管理", layout="wide")
 
-st.markdown("""
-<style>
-div[data-baseweb="select"] {
-    font-size: 16px !important;
-}
-.stSelectbox label {
-    font-size: 15px !important;
-    font-weight: bold !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
 service_instance, auth_source_name = get_drive_service()
 
 st.sidebar.title("🏢 経理くん（統括参謀）")
@@ -599,12 +537,10 @@ target_company = st.sidebar.selectbox("🏢 処理対象の会社（会計主体
 company_conf = COMPANY_CONFIG[target_company]
 st.sidebar.markdown(f"**標準口座:** `{company_conf['default_payment']}`")
 
-# 認証ステータス表示
 if service_instance:
     st.sidebar.success(f"☁️ Google Drive: **認証完了**\n({auth_source_name})")
 else:
     with st.sidebar.expander("🔑 Google Drive API手動設定", expanded=False):
-        st.info("Secrets未設定時の手動フォールバック枠です")
         custom_token = st.text_area("GOOGLE_TOKEN (JSON)", value="")
         if custom_token:
             st.session_state.custom_google_token = custom_token
@@ -638,7 +574,7 @@ with main_tab_receipt:
         st.info("💡 現在未処理プール（receipt_pool）に未処理の領収書はありません。")
     else:
         st.success(f"🎯 未処理の領収書: **残り {len(pooled_files)} 件**")
-        target_file = pooled_files[0]
+        target_file = pooled_files
         target_path = os.path.join(DEFAULT_POOL_DIR, target_file)
         ext = os.path.splitext(target_file)[1].lower()
 
@@ -665,7 +601,7 @@ with main_tab_receipt:
             st.markdown("### 📝 領収書の内容を確認して登録")
             with st.form("manual_receipt_form"):
                 rec_date = st.date_input("領収書日付", value=date.today())
-                store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file)[0])
+                store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file))
 
                 sel_cat = st.selectbox("勘定科目（全社共通マスター）", UNIFIED_ALL_CATEGORIES, index=UNIFIED_ALL_CATEGORIES.index("消耗品費"))
                 sel_pay = st.selectbox("決済手段", list(company_conf["payment_mapping"].keys()))
@@ -717,9 +653,12 @@ with main_tab_bank:
         if parsed_data:
             st.session_state.transactions_single = parsed_data
 
-    # テキスト直接貼り付けフォールバック
-    with st.expander("📋 明細テキスト直接貼り付け（フォールバック）"):
-        direct_text = st.text_area("PayPay銀行の明細テキストを直接貼り付け", placeholder="2026/10/16 15:46:48 793,800 793,800 振込 ド）シユガ－")
+    # テキスト直接貼り付けフォールバック（PDFが画像で文字が取れない場合でも100%救済）
+    with st.expander("📋 明細テキスト直接貼り付け（スキャンPDF等の救済用）"):
+        direct_text = st.text_area(
+            "PayPay銀行の明細テキストを直接貼り付け", 
+            placeholder="2026/10/16 15:46:48 793,800 793,800 振込 ド）シユガ－\n2026/10/22 10:03:31 500 596,695 MITSUI NOREPARK"
+        )
         if st.button("📋 テキストから明細を反映"):
             if direct_text:
                 st.session_state.transactions_single = parse_paypay_pdf_intelligent(direct_text.encode("utf-8"), target_company)
@@ -729,9 +668,6 @@ with main_tab_bank:
         records = st.session_state.transactions_single
         st.success(f"📊 明細解析完了: 合計 **{len(records)} 件** ｜ 3社共通マスターで全自動仕分け済")
 
-        # ----------------------------------------------------
-        # 2段ワイド表示：全社共通勘定科目マスターによる仕訳調整
-        # ----------------------------------------------------
         st.subheader("② 勘定科目・税務メモの確認・調整")
         for r in records:
             abs_amt = abs(r["amount"])
@@ -743,17 +679,16 @@ with main_tab_bank:
                     "📌 勘定科目（3社共通網羅マスター）", 
                     UNIFIED_ALL_CATEGORIES, 
                     index=cur_cat_idx, 
-                    key=f"cat_{r['id']}",
-                    help="広告宣伝費、売掛金、外注費、交際費など全社共通の正式勘定科目です。"
+                    key=f"cat_{r['id']}"
                 )
 
                 col_m1, col_m2 = st.columns(2)
                 with col_m1:
                     r["research_memo"] = st.text_input(
-                        "📝 業務・税務メモ（取引先・打合せ目的・研究内容など）", 
+                        "📝 業務・税務メモ（取引先・打合せ目的など）", 
                         value=r.get("research_memo", ""), 
                         key=f"memo_{r['id']}",
-                        placeholder="例: [販促] TJHiroshima広告掲載 / [会食] USEN山田常務打合せ"
+                        placeholder="例: [販促] TJHiroshima広告掲載"
                     )
 
                 with col_m2:
@@ -764,7 +699,7 @@ with main_tab_bank:
                         st.success("確定反映")
                         st.rerun()
 
-        # サマリープレビュー一覧
+        # サマリー一覧
         st.subheader(f"📋 【{target_company}】仕訳プレビュー一覧")
         preview_rows = []
         for r in records:
@@ -779,13 +714,10 @@ with main_tab_bank:
             })
         st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
 
-        # ----------------------------------------------------
-        # 月別フォルダ自動生成 ＆ Drive保管
-        # ----------------------------------------------------
         st.markdown("---")
         st.subheader(f"③ 【{target_company}】弥生仕訳CSV出力 ＆ 月別Drive自動保管")
 
-        target_month_str = records[0].get("month", datetime.now().strftime("%Y-%m")) if (records and isinstance(records, list) and len(records) > 0 and isinstance(records[0], dict)) else datetime.now().strftime("%Y-%m")
+        target_month_str = records.get("month", datetime.now().strftime("%Y-%m")) if records else datetime.now().strftime("%Y-%m")
         st.caption(f"📁 保存先: `{target_company}` 親フォルダID: `{company_conf['output_folder_id']}` ＞ **【 `{target_month_str}` 】サブフォルダ**（自動生成）")
 
         csv_str = generate_yayoi_csv_for_records(records, target_company)
@@ -821,6 +753,6 @@ with main_tab_bank:
                                 csv_bytes, 
                                 "text/csv"
                             )
-                            st.success(f"🎉 **{target_company}** のGoogle Drive親フォルダ内にある **【 `{target_month_str}` 】フォルダ** へ弥生仕訳CSVを安全に自動保管しました！（@9gates.info メンバー全員と自動共有中）")
+                            st.success(f"🎉 **{target_company}** のGoogle Drive親フォルダ内にある **【 `{target_month_str}` 】フォルダ** へ弥生仕訳CSVを安全に自動保管しました！")
                         except Exception as e:
                             st.error(f"Drive配送エラー: {str(e)}")
