@@ -242,7 +242,7 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
 
 def extract_month_from_filename_or_mtime(file_path):
     base_name = os.path.basename(file_path)
-    match = re.search(r'(202\d)[-_]?(0|1)[-_]?(\d{2})', base_name)
+    match = re.search(r'(202\d)[-_]?(0[1-9]|1[1, 2])[-_]?(\d{2})', base_name)
     if match:
         year, month = match.group(1), match.group(2)
         return f"{year}-{month}"
@@ -250,11 +250,12 @@ def extract_month_from_filename_or_mtime(file_path):
     return datetime.fromtimestamp(mtime).strftime("%Y-%m")
 
 # ==========================================
-# 5. 明細パース（PDF ＆ CSV 安全両対応）
+# 5. 明細パース（PDF ＆ CSV 完全両対応・バグ修正版）
 # ==========================================
 def parse_paypay_pdf(file_bytes, company_name):
+    """PayPay銀行 公式取引明細PDFから取引行を抽出"""
     if not HAS_PYPDF:
-        st.error("⚠️ サーバー環境に `pypdf` がインストールされていません。GitHubの `requirements.txt` に `pypdf` を追加してください。")
+        st.error("⚠️ サーバー環境に `pypdf` がインストールされていません。GitHubの requirements.txt に pypdf を追加してください。")
         return []
 
     conf = COMPANY_CONFIG[company_name]
@@ -263,19 +264,23 @@ def parse_paypay_pdf(file_bytes, company_name):
         reader = PdfReader(io.BytesIO(file_bytes))
         full_text = ""
         for page in reader.pages:
-            full_text += page.extract_text() + "\n"
+            t = page.extract_text()
+            if t:
+                full_text += t + "\n"
         
         lines = [l.strip() for l in full_text.split("\n") if l.strip()]
-        date_pattern = re.compile(r'^(202\d[/-]\d{1,2}[/-]\d{1,2})')
+        date_pattern = re.compile(r'^(202\d)[/-](\d{1,2})[/-](\d{1,2})')
         
         idx = 0
         for line in lines:
             m = date_pattern.match(line)
             if m:
-                raw_date = m.group(1).replace("/", "-")
-                parts = raw_date.split("-")
-                clean_date = f"{parts}-{parts.zfill(2)}-{parts.zfill(2)}"
-                month_str = clean_date[:7]
+                # 日付のゼロパディング修正（list object has no attribute 'zfill' の解消）
+                year = m.group(1)
+                month = m.group(2).zfill(2)
+                day = m.group(3).zfill(2)
+                clean_date = f"{year}-{month}-{day}"
+                month_str = f"{year}-{month}"
                 
                 tokens = line.split()
                 amounts = []
@@ -284,7 +289,7 @@ def parse_paypay_pdf(file_bytes, company_name):
                     num_clean = t.replace(",", "").replace("円", "")
                     if num_clean.isdigit() and len(num_clean) >= 2:
                         amounts.append(int(num_clean))
-                    elif not re.match(r'^\d{2}:\d{2}', t) and t not in [clean_date, raw_date]:
+                    elif not re.match(r'^\d{2}:\d{2}', t) and not date_pattern.match(t):
                         summary_tokens.append(t)
                 
                 amount = 0
