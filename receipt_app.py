@@ -357,7 +357,6 @@ if paypay_csv_file:
                         st.success(f"🎉 処理完了！\nGoogle Drive『{selected_company}経理くんデータ』内の「{target_month}」フォルダに、仕訳CSV・領収書（{moved_count}件）・消込ログを自動保存・移動しました！")
                     except Exception as e:
                         st.error(f"Google Drive保存エラー: {str(e)}")
-☁️ Google ドライブから領収書を同期する
 
 
 Google ドライブのフォルダ URL
