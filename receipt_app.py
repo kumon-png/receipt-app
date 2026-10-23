@@ -19,6 +19,17 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ==========================================
+# 0. 型安全ヘルパー関数（リスト混入防止デリスク）
+# ==========================================
+def safe_first_str(val, fallback=""):
+    """リストやタプルが渡された場合、先頭の文字列要素を安全に取り出す"""
+    if isinstance(val, (list, tuple)):
+        return str(val[0]) if len(val) > 0 else fallback
+    if val is None:
+        return fallback
+    return str(val)
+
+# ==========================================
 # 1. ユーザー定義
 # ==========================================
 USERS = {
@@ -164,7 +175,7 @@ MASTER_FILE = "vendor_master.xlsx"
 os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 
 # ==========================================
-# 4. Google Drive API 関数（認証フェイルセーフ対応）
+# 4. Google Drive API 関数
 # ==========================================
 def get_drive_service():
     scopes = ['[suspicious link removed]']
@@ -252,7 +263,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
     res = service.files().list(q=query, fields="files(id, name)", spaces='drive').execute()
     files = res.get('files', [])
     if files:
-        return files['id']
+        return files[0]['id']
     folder_metadata = {'name': target_month, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
     folder = service.files().create(body=folder_metadata, fields='id').execute()
     return folder.get('id')
@@ -272,7 +283,7 @@ def extract_month_from_filename_or_mtime(file_path):
     return datetime.fromtimestamp(mtime).strftime("%Y-%m")
 
 # ==========================================
-# 5. 明細パース（PDF 摘要抽出 ＆ 自動科目分類強化）
+# 5. 明細パース（PDF ＆ CSV 安全両対応）
 # ==========================================
 def parse_paypay_pdf(file_bytes, company_name):
     if not HAS_PYPDF:
@@ -280,7 +291,9 @@ def parse_paypay_pdf(file_bytes, company_name):
         return []
 
     conf = COMPANY_CONFIG[company_name]
-    default_pay = conf["payments"] if conf["payments"] else "普通預金"
+    default_pay = safe_first_str(conf["payments"], "普通預金")
+    default_cat = safe_first_str(conf["categories"], "雑費")
+    
     records = []
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
@@ -307,7 +320,6 @@ def parse_paypay_pdf(file_bytes, company_name):
                 amounts = []
                 summary_tokens = []
                 
-                # トークンを走査して金額と摘要（店舗名・加盟店コード）を分離
                 for t in tokens:
                     num_clean = t.replace(",", "").replace("円", "")
                     if num_clean.isdigit() and len(num_clean) >= 2:
@@ -318,8 +330,7 @@ def parse_paypay_pdf(file_bytes, company_name):
                 amount = 0
                 summary = " ".join(summary_tokens).strip()
                 if amounts:
-                    # 最初の金額を出金（マイナス）として認識
-                    amount = -amounts
+                    amount = -amounts[0]
                 
                 if clean_date and amount != 0:
                     summary_lower = summary.lower()
@@ -334,27 +345,25 @@ def parse_paypay_pdf(file_bytes, company_name):
                         elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square", "プレイステーション"]):
                             auto_memo = "[研究日報] AnimaCast：ゲーム内経済循環調査"
 
-                    # 初期科目の決定
-                    category = conf["categories"] if conf["categories"] else "雑費"
+                    category = default_cat
                     sub_account = ""
                     tax_type = "課対仕入10%"
 
-                    # 飲食判定
                     if is_dining:
                         category = "② 会議費・接待交際費" if company_name == "SF企画" else "交際費"
 
-                    # キーワードルールによる自動科目決定
                     matched_rule = False
                     for keywords, cat, sub_acc, t_type in conf.get("keyword_rules", []):
                         for kw in keywords:
                             if kw.lower() in summary_lower:
-                                category, sub_account, tax_type = cat, sub_acc, t_type
+                                category = safe_first_str(cat, default_cat)
+                                sub_account = sub_acc
+                                tax_type = t_type
                                 matched_rule = True
                                 break
                         if matched_rule:
                             break
 
-                    # 摘要が空または判定不能時のフォールバック
                     if not summary:
                         summary = "PayPay銀行出入金"
                         if company_name == "SF企画":
@@ -366,7 +375,7 @@ def parse_paypay_pdf(file_bytes, company_name):
                         "month": month_str,
                         "amount": int(amount),
                         "summary": summary,
-                        "category": category,
+                        "category": safe_first_str(category, default_cat),
                         "sub_account": sub_account,
                         "tax_type": tax_type,
                         "payment": default_pay,
@@ -382,7 +391,8 @@ def parse_paypay_pdf(file_bytes, company_name):
 
 def parse_paypay_csv(file_bytes, company_name):
     conf = COMPANY_CONFIG[company_name]
-    default_pay = conf["payments"] if conf["payments"] else "普通預金"
+    default_pay = safe_first_str(conf["payments"], "普通預金")
+    default_cat = safe_first_str(conf["categories"], "雑費")
     try:
         try:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding="utf-8")
@@ -447,7 +457,7 @@ def parse_paypay_csv(file_bytes, company_name):
                     elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square", "プレイステーション"]):
                         auto_memo = "[研究日報] AnimaCast：ゲーム内経済循環調査"
 
-                category = conf["categories"] if conf["categories"] else "雑費"
+                category = default_cat
                 sub_account = ""
                 tax_type = "課対仕入10%"
 
@@ -458,7 +468,9 @@ def parse_paypay_csv(file_bytes, company_name):
                 for keywords, cat, sub_acc, t_type in conf.get("keyword_rules", []):
                     for kw in keywords:
                         if kw.lower() in summary_lower:
-                            category, sub_account, tax_type = cat, sub_acc, t_type
+                            category = safe_first_str(cat, default_cat)
+                            sub_account = sub_acc
+                            tax_type = t_type
                             matched_rule = True
                             break
                     if matched_rule:
@@ -471,7 +483,7 @@ def parse_paypay_csv(file_bytes, company_name):
                     "month": clean_date[:7],
                     "amount": int(amount),
                     "summary": summary,
-                    "category": category,
+                    "category": safe_first_str(category, default_cat),
                     "sub_account": sub_account,
                     "tax_type": tax_type,
                     "payment": default_pay,
@@ -486,24 +498,28 @@ def parse_paypay_csv(file_bytes, company_name):
 
 def generate_yayoi_csv_for_records(target_records, company_name):
     conf = COMPANY_CONFIG[company_name]
-    default_pay = conf["payments"] if conf["payments"] else "普通預金"
+    default_pay = safe_first_str(conf["payments"], "普通預金")
     lines = []
     for row in target_records:
-        pay_method = row.get("payment", default_pay)
-        if isinstance(pay_method, list):
-            pay_method = pay_method if len(pay_method) > 0 else default_pay
+        # pay_methodを確実に文字列型として抽出
+        raw_pay = row.get("payment", default_pay)
+        pay_method = safe_first_str(raw_pay, default_pay)
             
         credit_subj, credit_sub = conf["payment_mapping"].get(pay_method, ("普通預金", ""))
-        debit_subj = row.get("category", "外注費")
-        debit_sub = row.get("sub_account", "")
-        tax_type = row.get("tax_type", "課対仕入10%")
-        amount = str(abs(row.get("amount", 0)))
-        date_str = row.get("date", "").replace("-", "/")
         
-        base_summary = row.get('summary', '')
+        # categoryも確実に文字列型として抽出
+        raw_cat = row.get("category", "外注費")
+        debit_subj = safe_first_str(raw_cat, "外注費")
+        
+        debit_sub = safe_first_str(row.get("sub_account", ""))
+        tax_type = safe_first_str(row.get("tax_type", "課対仕入10%"))
+        amount = str(abs(row.get("amount", 0)))
+        date_str = str(row.get("date", "")).replace("-", "/")
+        
+        base_summary = safe_first_str(row.get('summary', ''))
         memo_parts = []
         if row.get('research_memo'):
-            memo_parts.append(row['research_memo'])
+            memo_parts.append(str(row['research_memo']))
         if row.get('dining_info'):
             d = row['dining_info']
             memo_parts.append(f"[{d['judged_cat']}] {d['partner']} ({d['people']}名/単価¥{d['unit_price']:,}) 目的:{d['purpose']}")
@@ -644,7 +660,7 @@ if st.session_state.get("transactions"):
                             st.rerun()
 
     # ----------------------------------------------------
-    # 📋 月別自動仕訳プレビュー（個別科目手動変更対応）
+    # 📋 月別自動仕訳プレビュー
     # ----------------------------------------------------
     st.subheader("📋 月別自動仕訳プレビュー")
     preview_data = []
@@ -658,8 +674,8 @@ if st.session_state.get("transactions"):
             "日付": r["date"],
             "金額": r["amount"],
             "摘要": r["summary"],
-            "勘定科目": r["category"],
-            "決済口座": r["payment"],
+            "勘定科目": safe_first_str(r.get("category"), "未設定"),
+            "決済口座": safe_first_str(r.get("payment"), "普通預金"),
             "税務メモ": memo_str
         })
     st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
@@ -667,7 +683,7 @@ if st.session_state.get("transactions"):
     st.markdown("---")
     st.subheader(f"📥 複数月一括：弥生仕訳CSV出力 ＆ ④ 各月Driveフォルダ自動配送")
 
-    # ダウンロードタブ（即座に手元へ保存可能）
+    # ダウンロードタブ（即座にローカル保存可能）
     dl_tabs = st.tabs([f"📥 {m} 弥生CSV" for m in detected_months])
     for idx, m in enumerate(detected_months):
         with dl_tabs[idx]:
