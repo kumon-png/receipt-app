@@ -23,7 +23,7 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 # ==========================================
 def safe_first_str(val, fallback=""):
     if isinstance(val, (list, tuple)):
-        return str(val[0]) if len(val) > 0 else fallback
+        return str(val) if len(val) > 0 else fallback
     if val is None:
         return fallback
     return str(val)
@@ -84,11 +84,29 @@ UNIFIED_ALL_CATEGORIES = [
 # 3. 九門グループ 3社合同 高度自動仕訳マッチングルール
 # ==========================================
 AUTO_MATCH_RULES = [
-    # 1. 広告宣伝費
+    # --- ご指定の追加個別ルール（優先適用） ---
+    # ① Akari cafe 宇品 → 広告宣伝費（toridoriマーケティング）
+    (["akari cafe", "akaricafe", "アカリカフェ", "あかりカフェ"], 
+     "広告宣伝費", "課対仕入10%", "[販促] toridoriマーケティング（Akari cafe宇品）"),
+
+    # ② リビング・ユー → 交際費
+    (["リビング・ユー", "リビングユー", "living you"], 
+     "交際費", "課対仕入10%", "[会食交際] リビング・ユー 取引先打合せ"),
+
+    # ③ フレスタ → 仕入高（10%） メモ（アカリカフェ材料費）
+    (["フレスタ", "fresta"], 
+     "仕入高（10%）", "課対仕入10%", "アカリカフェ材料費"),
+
+    # ④ MITSUINOREPARK / 三井のリパーク → 旅費交通費 メモ（駐車代金）
+    (["mitsuinorepark", "mitsuino repark", "三井のリパーク", "リパーク"], 
+     "旅費交通費", "課対仕入10%", "[交通費] 駐車代金（三井のリパーク）"),
+
+    # --- 一般辞書ルール ---
+    # 広告宣伝費
     (["タベログ", "tabelog", "indeed", "インディード", "tjhiroshima", "アドプレックス", "facebook ads", "google ads", "広告"], 
      "広告宣伝費", "課対仕入10%", "[販促] 広告宣伝掲載費"),
 
-    # 2. 調査研究費（AnimaCast Core IP・ゲーム経済・先端API）
+    # 調査研究費（AnimaCast Core IP・ゲーム経済・先端API）
     (["スクウェア", "スクエニ", "ｽｸｳｴｱ", "square enix", "ドラクエ", "任天堂", "nintendo", "steam", "プレイステーション", "ps store"], 
      "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"),
     (["google play", "app store", "apple"], 
@@ -96,49 +114,49 @@ AUTO_MATCH_RULES = [
     (["u-next", "netflix", "プライムビデオ"], 
      "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] 映像ストリーミング・配信UI/UX検証"),
 
-    # 3. 交際費（接待・取引先会食）
+    # 交際費（接待・取引先会食）
     (["蹄", "hizume", "はき溜め", "はき駄め", "野武士", "nobushi", "エスカイヤ", "esquire", "ふるさと", "西海", "saikai", 
-      "かに道楽", "右近", "とり八", "串カツ田中", "麻ノ葉", "リビングユー", "蜂ヤ", "四十", "denuke", "心屋", "すずらん"], 
+      "かに道楽", "右近", "とり八", "串カツ田中", "麻ノ葉", "蜂ヤ", "四十", "denuke", "心屋", "すずらん"], 
      "交際費", "課対仕入10%", "[会食交際] 取引先・アライアンス打合せ"),
 
-    # 4. 会議費（打合せ・軽食）
+    # 会議費（打合せ・軽食）
     (["すし辰", "sushitatsu", "くら寿司", "kura sushi", "スシロー", "sushiro", "アンデルセン", "ロイヤルホスト", 
       "royalhost", "ゆず庵", "サイゼリヤ", "スターバックス", "ドトール", "珈琲", "カフェ", "電光石火", "ガスト", "ジョイフル"], 
      "会議費", "課対仕入10%", "[社内・社外会議] 業務打合せ・飲食代"),
 
-    # 5. 通信費（クラウド・IT・通信）
+    # 通信費（クラウド・IT・通信）
     (["サイボウズ", "cybozu", "adobe", "アドビ", "マイクロソフト", "msft", "microsoft", "ドコモ", "docomo", 
       "楽天モバイル", "rakuten mobile", "チュピコム", "usen music", "ミライ工事", "ソウルウェア", "canva", "オートデスク", "autodesk"], 
      "通信費", "課対仕入10%", ""),
 
-    # 6. 消耗品費（資材・工具・事務用品）
+    # 消耗品費（資材・工具・事務用品）
     (["アマゾン", "amazon", "コーナン", "kohnan", "モノタロウ", "monotaro", "建デポ", "kendepo", "西村ジョイ", 
       "セリア", "seria", "ヨドバシ", "エディオン", "edion", "ニトリ", "nitori", "ジュンテンドー", "コメリ", "ナフコ", "ユニットコム"], 
      "消耗品費", "課対仕入10%", ""),
 
-    # 7. 旅費交通費（新幹線・宿泊・タクシー・駐車場）
+    # 旅費交通費（新幹線・宿泊・タクシー・駐車場）
     (["jr", "西日本旅客鉄道", "東海旅客鉄道", "東日本旅客鉄道", "新幹線", "楽天トラベル", "rakuten travel", 
-      "ホテル", "hotel", "タイムズ", "times", "リパーク", "repart", "グリーンパーク", "スカイパーク", 
+      "ホテル", "hotel", "タイムズ", "times", "グリーンパーク", "スカイパーク", 
       "タクシー", "taxi", "瀬戸内海汽船", "汽船", "高速情報協同組合"], 
      "旅費交通費", "課対仕入10%", ""),
 
-    # 8. 車両費（燃料・車検・整備）
+    # 車両費（燃料・車検・整備）
     (["キユウユダイ", "給油", "eneos", "エネオス", "アポロステーション", "apollostation", "タイヤ館", "スズキ自販", "車検"], 
      "車両費", "課対仕入10%", ""),
 
-    # 9. 食材仕入（シュガー店舗等）
+    # 食材仕入（シュガー店舗等）
     (["wannaeat", "ワナイート", "a-price", "大黒天物産", "食材"], 
      "仕入高（8%軽）", "課対仕入8%(軽)", ""),
 
-    # 10. 外注費（主要施工・開発パートナーへの振込）
+    # 外注費（主要施工・開発パートナーへの振込）
     (["ケーティーエス", "kts", "鳥取通信", "ベッセル", "エルワイコンサル", "アイデン", "ミカモ電気", "アルテック", "awc", "アイ・リンク"], 
      "外注費", "課対仕入10%", ""),
 
-    # 11. 支払手数料（振込手数料・公課）
+    # 支払手数料（振込手数料・公課）
     (["振込手数料", "手数料", "全厚済"], 
      "支払手数料", "課対仕入10%", ""),
 
-    # 12. 保険料
+    # 保険料
     (["sompo", "損保ジャパン", "ビジネスセイト", "火災保険"], 
      "保険料", "対象外", "")
 ]
@@ -239,7 +257,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
         ).execute()
         files = results.get('files', [])
         if files:
-            return files[0]['id']
+            return files['id']
 
         folder_metadata = {
             'name': target_month,
@@ -312,7 +330,9 @@ def sync_from_company_drive(folder_id, pool_dir):
 # 6. 超自動仕訳マッチング判定エンジン
 # ==========================================
 def match_intelligent_category(summary_text, is_income):
-    summary_lower = summary_text.lower()
+    # 全角英数・スペースの正規化
+    summary_norm = summary_text.replace("　", " ").strip()
+    summary_lower = summary_norm.lower()
 
     if is_income:
         if "利息" in summary_lower:
@@ -321,6 +341,7 @@ def match_intelligent_category(summary_text, is_income):
             return "役員借入金（代表立替・借入）", "対象外", True, "代表立替・役員借入金戻入"
         return "売上高", "課税売上10%", True, "売上高・売掛金回収入金"
 
+    # 出金取引の辞書マッチング（Akari cafe, リビング・ユー, フレスタ, リパーク等を完全判定）
     for keywords, category, tax_type, memo in AUTO_MATCH_RULES:
         for kw in keywords:
             if kw.lower() in summary_lower:
@@ -377,15 +398,15 @@ def parse_paypay_pdf_intelligent(file_bytes, target_company):
                     summary_lower = summary.lower()
 
                     is_income = False
-                    if len(amounts) >= 2 and amounts[0] == amounts[1]:
+                    if len(amounts) >= 2 and amounts == amounts[8]:
                         is_income = True
-                        amount = amounts[0]
+                        amount = amounts
                     elif any(k in summary_lower for k in ["振込", "お利息", "利息", "入金"]):
                         is_income = True
-                        amount = amounts[0]
+                        amount = amounts
                     else:
                         is_income = False
-                        amount = -amounts[0]
+                        amount = -amounts
 
                     if not summary:
                         summary = "PayPay銀行入金" if is_income else "PayPay銀行出金"
@@ -588,9 +609,9 @@ with main_tab_receipt:
         st.info("💡 現在未処理プール（receipt_pool）に未処理の領収書はありません。")
     else:
         st.success(f"🎯 未処理の領収書: **残り {len(pooled_files)} 件**")
-        target_file = pooled_files[0]
+        target_file = pooled_files
         target_path = os.path.join(DEFAULT_POOL_DIR, target_file)
-        ext = os.path.splitext(target_file)[1].lower()
+        ext = os.path.splitext(target_file)[8].lower()
 
         c_view, c_form = st.columns([1.2, 1])
         with c_view:
@@ -615,12 +636,12 @@ with main_tab_receipt:
             st.markdown("### 📝 領収書の内容を確認して登録")
             with st.form("manual_receipt_form"):
                 rec_date = st.date_input("領収書日付", value=date.today())
-                store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file)[0])
+                store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file))
 
                 sel_cat = st.selectbox("勘定科目（全社共通マスター）", UNIFIED_ALL_CATEGORIES, index=UNIFIED_ALL_CATEGORIES.index("消耗品費"))
                 sel_pay = st.selectbox("決済手段", list(company_conf["payment_mapping"].keys()))
 
-                col_f1, col_f2 = st.columns([1, 1])
+                col_f1, col_f2 = st.columns(2)
                 with col_f1:
                     rec_amount = st.number_input("支払金額（税込・円）*", min_value=0, step=100, value=0)
                 with col_f2:
@@ -700,7 +721,7 @@ with main_tab_bank:
                 )
 
                 # 【下段・2段目】：業務メモ（幅広83%） ＋ 確定ボタン（17%）
-                col_m1, col_m2 = st.columns([5, 1])
+                col_m1, col_m2 = st.columns([8, 9])
                 with col_m1:
                     r["research_memo"] = st.text_input(
                         "📝 業務・税務メモ（取引先・打合せ目的・研究内容など）", 
@@ -738,14 +759,14 @@ with main_tab_bank:
         st.markdown("---")
         st.subheader(f"③ 【{target_company}】弥生仕訳CSV出力 ＆ 月別Drive自動保管")
 
-        target_month_str = records[0]["month"] if records else datetime.now().strftime("%Y-%m")
+        target_month_str = records["month"] if records else datetime.now().strftime("%Y-%m")
         st.caption(f"📁 保存先: `{target_company}` 親フォルダID: `{company_conf['output_folder_id']}` ＞ **【 `{target_month_str}` 】サブフォルダ**（自動生成）")
 
         csv_str = generate_yayoi_csv_for_records(records, target_company)
         try: csv_bytes = csv_str.encode("cp932", errors="replace")
         except Exception: csv_bytes = csv_str.encode("utf-8-sig")
 
-        col_d1, col_d2 = st.columns([1, 1])
+        col_d1, col_d2 = st.columns(2)
         with col_d1:
             st.download_button(
                 label=f"📥 【{target_company}】弥生仕訳CSVをダウンロード ({len(records)}件)",
