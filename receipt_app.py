@@ -23,7 +23,7 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 # ==========================================
 def safe_first_str(val, fallback=""):
     if isinstance(val, (list, tuple)):
-        return str(val) if len(val) > 0 else fallback
+        return str(val[0]) if len(val) > 0 else fallback
     if val is None:
         return fallback
     return str(val)
@@ -91,7 +91,7 @@ AUTO_MATCH_RULES = [
     # 2. 調査研究費（AnimaCast Core IP・ゲーム経済・先端API）
     (["スクウェア", "スクエニ", "ｽｸｳｴｱ", "square enix", "ドラクエ", "任天堂", "nintendo", "steam", "プレイステーション", "ps store"], 
      "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"),
-    (["google play", "app store", "[suspicious link removed]", "apple"], 
+    (["google play", "app store", "apple"], 
      "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：アプリ課金API・決済UI検証"),
     (["u-next", "netflix", "プライムビデオ"], 
      "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] 映像ストリーミング・配信UI/UX検証"),
@@ -203,7 +203,7 @@ os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
 
 # ==========================================
-# 5. Google Drive API 関数（月別フォルダ自動作成・共有ドライブ対応）
+# 5. Google Drive API 関数
 # ==========================================
 def get_drive_service():
     scopes = ['[suspicious link removed]']
@@ -227,7 +227,7 @@ def get_drive_service():
     return None
 
 def get_or_create_monthly_folder(service, parent_folder_id, target_month):
-    """親フォルダ内に 'YYYY-MM'（例: '2026-10'）フォルダを検索・自動作成"""
+    """親フォルダ内に 'YYYY-MM' フォルダを検索・自動作成"""
     try:
         query = f"'{parent_folder_id}' in parents and name = '{target_month}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         results = service.files().list(
@@ -239,7 +239,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
         ).execute()
         files = results.get('files', [])
         if files:
-            return files['id']
+            return files[0]['id']
 
         folder_metadata = {
             'name': target_month,
@@ -272,7 +272,7 @@ def get_pooled_files(target_dir):
 
 def sync_from_company_drive(folder_id, pool_dir):
     service = get_drive_service()
-    if not service: return False, "Google Drive API認証キーが未設定です。"
+    if not service: return False, "Google Drive API認証キーが設定されていません。"
     if not folder_id: return False, "フォルダIDが未設定です。"
 
     synced_ids = []
@@ -377,15 +377,15 @@ def parse_paypay_pdf_intelligent(file_bytes, target_company):
                     summary_lower = summary.lower()
 
                     is_income = False
-                    if len(amounts) >= 2 and amounts == amounts:
+                    if len(amounts) >= 2 and amounts[0] == amounts[1]:
                         is_income = True
-                        amount = amounts
+                        amount = amounts[0]
                     elif any(k in summary_lower for k in ["振込", "お利息", "利息", "入金"]):
                         is_income = True
-                        amount = amounts
+                        amount = amounts[0]
                     else:
                         is_income = False
-                        amount = -amounts
+                        amount = -amounts[0]
 
                     if not summary:
                         summary = "PayPay銀行入金" if is_income else "PayPay銀行出金"
@@ -588,9 +588,9 @@ with main_tab_receipt:
         st.info("💡 現在未処理プール（receipt_pool）に未処理の領収書はありません。")
     else:
         st.success(f"🎯 未処理の領収書: **残り {len(pooled_files)} 件**")
-        target_file = pooled_files
+        target_file = pooled_files[0]
         target_path = os.path.join(DEFAULT_POOL_DIR, target_file)
-        ext = os.path.splitext(target_file).lower()
+        ext = os.path.splitext(target_file)[1].lower()
 
         c_view, c_form = st.columns([1.2, 1])
         with c_view:
@@ -615,12 +615,12 @@ with main_tab_receipt:
             st.markdown("### 📝 領収書の内容を確認して登録")
             with st.form("manual_receipt_form"):
                 rec_date = st.date_input("領収書日付", value=date.today())
-                store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file))
+                store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file)[0])
 
                 sel_cat = st.selectbox("勘定科目（全社共通マスター）", UNIFIED_ALL_CATEGORIES, index=UNIFIED_ALL_CATEGORIES.index("消耗品費"))
                 sel_pay = st.selectbox("決済手段", list(company_conf["payment_mapping"].keys()))
 
-                col_f1, col_f2 = st.columns(2)
+                col_f1, col_f2 = st.columns([1, 1])
                 with col_f1:
                     rec_amount = st.number_input("支払金額（税込・円）*", min_value=0, step=100, value=0)
                 with col_f2:
@@ -699,8 +699,8 @@ with main_tab_bank:
                     help="広告宣伝費、売掛金、外注費、交際費など全社共通の正式勘定科目です。"
                 )
 
-                # 【下段・2段目】：業務メモ（幅広） ＋ 確定ボタン
-                col_m1, col_m2 = st.columns()
+                # 【下段・2段目】：業務メモ（幅広83%） ＋ 確定ボタン（17%）
+                col_m1, col_m2 = st.columns([5, 1])
                 with col_m1:
                     r["research_memo"] = st.text_input(
                         "📝 業務・税務メモ（取引先・打合せ目的・研究内容など）", 
@@ -738,14 +738,14 @@ with main_tab_bank:
         st.markdown("---")
         st.subheader(f"③ 【{target_company}】弥生仕訳CSV出力 ＆ 月別Drive自動保管")
 
-        target_month_str = records["month"] if records else datetime.now().strftime("%Y-%m")
+        target_month_str = records[0]["month"] if records else datetime.now().strftime("%Y-%m")
         st.caption(f"📁 保存先: `{target_company}` 親フォルダID: `{company_conf['output_folder_id']}` ＞ **【 `{target_month_str}` 】サブフォルダ**（自動生成）")
 
         csv_str = generate_yayoi_csv_for_records(records, target_company)
         try: csv_bytes = csv_str.encode("cp932", errors="replace")
         except Exception: csv_bytes = csv_str.encode("utf-8-sig")
 
-        col_d1, col_d2 = st.columns(2)
+        col_d1, col_d2 = st.columns([1, 1])
         with col_d1:
             st.download_button(
                 label=f"📥 【{target_company}】弥生仕訳CSVをダウンロード ({len(records)}件)",
