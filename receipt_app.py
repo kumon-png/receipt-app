@@ -30,7 +30,7 @@ DINING_KEYWORDS = [
 ]
 
 # ==========================================
-# 3. 各法人設定・1次読込フォルダ・出力先フォルダ・勘定科目辞書
+# 3. 各法人設定・口座マスタ（支店番号-口座番号完全連動）
 # ==========================================
 COMPANY_CONFIG = {
     "ナインゲイツ": {
@@ -39,13 +39,23 @@ COMPANY_CONFIG = {
         "input_folder_id": "1upG2C-m-An3VcI1ULE7A6BwHipRzIjge",
         "output_folder_id": "1xtj1g42RSwOa_eUATF89qLdS_JiM_yQ8",
         "categories": ["外注費", "仕入高", "仕入高（8%軽）", "旅費交通費", "消耗品費", "車両費", "通信費", "会議費", "交際費", "地代家賃", "水道光熱費", "支払手数料", "法定福利費", "福利厚生費", "雑費"],
-        "payments": ["普通預金（PayPay銀行）", "クレジットカード（未払金）", "役員立替（役員借入金）", "現金", "普通預金（広島市信用組合）"],
+        "payments": [
+            "普通預金（PayPay銀行 005-1744850）",
+            "普通預金（広島市信用組合 117-0878359-0）",
+            "普通預金（呉信用金庫 020-1096121）",
+            "役員立替（PayPay個人 003-2060281）",
+            "役員立替（楽天個人 214-4383608）",
+            "クレジットカード（未払金）",
+            "現金"
+        ],
         "payment_mapping": {
-            "普通預金（PayPay銀行）": ("普通預金", "PayPay銀行"),
+            "普通預金（PayPay銀行 005-1744850）": ("普通預金", "PayPay銀行(1744850)"),
+            "普通預金（広島市信用組合 117-0878359-0）": ("普通預金", "広島市信用組合"),
+            "普通預金（呉信用金庫 020-1096121）": ("普通預金", "呉信用金庫"),
+            "役員立替（PayPay個人 003-2060281）": ("役員借入金", "九門久士(PayPay)"),
+            "役員立替（楽天個人 214-4383608）": ("役員借入金", "九門久士(楽天)"),
             "クレジットカード（未払金）": ("未払金", "カード"),
-            "役員立替（役員借入金）": ("役員借入金", "九門久士"),
             "現金": ("現金", ""),
-            "普通預金（広島市信用組合）": ("普通預金", "広島市信用組合"),
         },
         "keyword_rules": [
             (["ケーティーエス", "kts"], "外注費", "", "課対仕入10%"),
@@ -73,13 +83,25 @@ COMPANY_CONFIG = {
         "input_folder_id": "1qo5FqrpHDFgY4tzf32YaYbFQB6wCQ9Ih",
         "output_folder_id": "19HhywRqfSRG2tWMVzDkcw6DlmCMGLgSI",
         "categories": ["外注費", "仕入高（8%軽）", "仕入高（10%）", "地代家賃", "旅費交通費", "消耗品費", "支払手数料", "荷造運賃", "リース料", "雑費", "開業費"],
-        "payments": ["普通預金（PayPay銀行）", "役員立替（短期借入金）", "クレジットカード（未払金）", "普通預金（広島市信用組合）", "普通預金（呉信用金庫）"],
+        "payments": [
+            "普通預金（呉信用金庫 020-1096139）",
+            "普通預金（広島市信用組合 117-0878367）",
+            "普通預金（PayPay銀行 005-5332515）",
+            "普通預金（PayPay法人 005-5332523）",
+            "役員立替（PayPay個人 003-2060281）",
+            "役員立替（楽天個人 214-4383608）",
+            "クレジットカード（未払金）",
+            "現金"
+        ],
         "payment_mapping": {
-            "普通預金（PayPay銀行）": ("普通預金", "PayPay銀行"),
-            "役員立替（短期借入金）": ("短期借入金", "クモンヒサシ"),
+            "普通預金（呉信用金庫 020-1096139）": ("普通預金", "呉信用金庫"),
+            "普通預金（広島市信用組合 117-0878367）": ("普通預金", "広島市信用組合"),
+            "普通預金（PayPay銀行 005-5332515）": ("普通預金", "PayPay銀行(5332515)"),
+            "普通預金（PayPay法人 005-5332523）": ("普通預金", "PayPay法人(5332523)"),
+            "役員立替（PayPay個人 003-2060281）": ("短期借入金", "クモンヒサシ(PayPay)"),
+            "役員立替（楽天個人 214-4383608）": ("短期借入金", "クモンヒサシ(楽天)"),
             "クレジットカード（未払金）": ("未払金", ""),
-            "普通預金（広島市信用組合）": ("普通預金", "広島市信用組合"),
-            "普通預金（呉信用金庫）": ("普通預金", "呉信用金庫"),
+            "現金": ("現金", "")
         },
         "keyword_rules": [
             (["ナインゲイツ", "ninegates"], "外注費", "株式会社ナインゲイツ", "課対仕入10%"),
@@ -93,11 +115,19 @@ COMPANY_CONFIG = {
         "input_folder_id": "1BZrjf_kq_kNLsXoOOMfRxUKiJSydC5Qa",
         "output_folder_id": "1VuS4VHIPpNG8HPbARq4xkkDUdE_wN8U6",
         "categories": ["① 旅費交通費・車両維持費", "② 会議費・接待交際費", "③ 通信費・IT・クラウド利用料", "④ 地代家賃・水道光熱費", "⑤ 調査研究費・消耗品費", "⑥ 支払手数料・租税公課", "開業費（繰延資産）"],
-        "payments": ["普通預金（PayPay銀行）", "役員立替（役員借入金）", "クレジットカード（未払金）"],
+        "payments": [
+            "普通預金（PayPay銀行 005-2423746）",
+            "役員立替（PayPay個人 003-2060281）",
+            "役員立替（楽天個人 214-4383608）",
+            "クレジットカード（未払金）",
+            "現金"
+        ],
         "payment_mapping": {
-            "普通預金（PayPay銀行）": ("普通預金", "PayPay銀行"),
-            "役員立替（役員借入金）": ("役員借入金", "九門久士"),
+            "普通預金（PayPay銀行 005-2423746）": ("普通預金", "PayPay銀行(2423746)"),
+            "役員立替（PayPay個人 003-2060281）": ("役員借入金", "九門久士(PayPay)"),
+            "役員立替（楽天個人 214-4383608）": ("役員借入金", "九門久士(楽天)"),
             "クレジットカード（未払金）": ("未払金", ""),
+            "現金": ("現金", "")
         },
         "keyword_rules": [
             (["google play", "googleplay", "app store", "apple"], "⑤ 調査研究費・消耗品費", "AnimaCast開発", "課対仕入10%"),
@@ -134,7 +164,7 @@ def get_drive_service():
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
-    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[1].lower() in valid_exts])
+    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[8].lower() in valid_exts])
 
 def sync_from_company_drive(folder_id, pool_dir):
     service = get_drive_service()
@@ -192,7 +222,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
     res = service.files().list(q=query, fields="files(id, name)", spaces='drive').execute()
     files = res.get('files', [])
     if files:
-        return files[0]['id']
+        return files['id']
     folder_metadata = {'name': target_month, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
     folder = service.files().create(body=folder_metadata, fields='id').execute()
     return folder.get('id')
@@ -204,7 +234,7 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
 
 def extract_month_from_filename_or_mtime(file_path):
     base_name = os.path.basename(file_path)
-    match = re.search(r'(202\d)[-_]?(0[1-9]|1[0-2])[-_]?(\d{2})', base_name)
+    match = re.search(r'(202\d)[-_]?(0[1, 2, 8-14]|1[1, 8])[-_]?(\d{2})', base_name)
     if match:
         year, month = match.group(1), match.group(2)
         return f"{year}-{month}"
@@ -259,7 +289,7 @@ def parse_paypay_csv(file_bytes, company_name):
                     elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square"]):
                         auto_memo = "[研究日報] AnimaCast：ゲーム内経済循環調査"
 
-                category = conf["categories"][0] if conf["categories"] else "雑費"
+                category = conf["categories"] if conf["categories"] else "雑費"
                 sub_account = ""
                 tax_type = "課対仕入10%"
 
@@ -282,6 +312,7 @@ def parse_paypay_csv(file_bytes, company_name):
                     "category": category,
                     "sub_account": sub_account,
                     "tax_type": tax_type,
+                    "payment": conf["payments"],
                     "is_dining": is_dining,
                     "dining_info": None,
                     "research_memo": auto_memo
@@ -295,8 +326,8 @@ def generate_yayoi_csv_for_records(target_records, company_name):
     conf = COMPANY_CONFIG[company_name]
     lines = []
     for row in target_records:
-        pay_method = row.get("payment", "普通預金（PayPay銀行）")
-        credit_subj, credit_sub = conf["payment_mapping"].get(pay_method, ("普通預金", "PayPay銀行"))
+        pay_method = row.get("payment", conf["payments"])
+        credit_subj, credit_sub = conf["payment_mapping"].get(pay_method, ("普通預金", ""))
         debit_subj = row.get("category", "外注費")
         debit_sub = row.get("sub_account", "")
         tax_type = row.get("tax_type", "課対仕入10%")
@@ -325,7 +356,6 @@ def generate_yayoi_csv_for_records(target_records, company_name):
 # ==========================================
 st.set_page_config(page_title="九門グループ 統合経理・消込＆Drive自動保管", layout="wide")
 
-# サイドバータイトル改訂：経理くん
 st.sidebar.title("🏢 経理くん")
 current_user_email = st.sidebar.selectbox("操作者選択", list(USERS.keys()), format_func=lambda x: USERS[x]["name"])
 selected_company = st.sidebar.selectbox("🏢 対象法人", USERS[current_user_email]["companies"])
@@ -337,7 +367,6 @@ current_output_folder_id = company_conf["output_folder_id"]
 st.sidebar.markdown(f"**📂 1次読込フォルダID:**\n`{current_input_folder_id}`")
 st.sidebar.markdown(f"**📁 出力先親フォルダID:**\n`{current_output_folder_id}`")
 
-# メインヘッダー改訂：経理自動仕訳・消込・Drive月別保管
 st.title("🏢 経理自動仕訳・消込・Drive月別保管")
 
 # ------------------------------------------
@@ -448,6 +477,7 @@ if st.session_state.transactions:
             "金額": r["amount"],
             "摘要": r["summary"],
             "勘定科目": r["category"],
+            "決済口座": r["payment"],
             "税務メモ": memo_str
         })
     st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
