@@ -134,7 +134,6 @@ def get_drive_service():
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
-    # [1] で正しく拡張子文字列を取り出して lower() を実行
     return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[1].lower() in valid_exts])
 
 def sync_from_company_drive(folder_id, pool_dir):
@@ -193,7 +192,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
     res = service.files().list(q=query, fields="files(id, name)", spaces='drive').execute()
     files = res.get('files', [])
     if files:
-        return files['id']
+        return files[0]['id']
     folder_metadata = {'name': target_month, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
     folder = service.files().create(body=folder_metadata, fields='id').execute()
     return folder.get('id')
@@ -326,7 +325,8 @@ def generate_yayoi_csv_for_records(target_records, company_name):
 # ==========================================
 st.set_page_config(page_title="九門グループ 統合経理・消込＆Drive自動保管", layout="wide")
 
-st.sidebar.title("🏢 経理統制システム")
+# サイドバータイトル改訂：経理くん
+st.sidebar.title("🏢 経理くん")
 current_user_email = st.sidebar.selectbox("操作者選択", list(USERS.keys()), format_func=lambda x: USERS[x]["name"])
 selected_company = st.sidebar.selectbox("🏢 対象法人", USERS[current_user_email]["companies"])
 
@@ -337,7 +337,8 @@ current_output_folder_id = company_conf["output_folder_id"]
 st.sidebar.markdown(f"**📂 1次読込フォルダID:**\n`{current_input_folder_id}`")
 st.sidebar.markdown(f"**📁 出力先親フォルダID:**\n`{current_output_folder_id}`")
 
-st.title(f"🏢 経理自動仕訳・消込・Drive月別保管 ({selected_company})")
+# メインヘッダー改訂：経理自動仕訳・消込・Drive月別保管
+st.title("🏢 経理自動仕訳・消込・Drive月別保管")
 
 # ------------------------------------------
 # ☁️ Google ドライブから領収書を同期する
@@ -393,7 +394,7 @@ if st.session_state.transactions:
     st.info(f"📊 明細解析完了: 合計 **{len(records)} 件** ｜ 検出月: **{', '.join(detected_months)}** ({len(detected_months)}ヶ月分を自動判別)")
 
     # ----------------------------------------------------
-    # 🍽️ 飲食・会食検知行の自動表示
+    # 🍽️ 飲食・会食検知行の自動表示（10,000円判定）
     # ----------------------------------------------------
     dining_candidates = [r for r in records if r["is_dining"]]
     if dining_candidates:
