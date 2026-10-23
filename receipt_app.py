@@ -40,7 +40,6 @@ USERS = {
 
 # ==========================================
 # 2. 九門グループ 3社完全共通 網羅勘定科目マスター
-# （会社によって分けず、全社で完全共通利用）
 # ==========================================
 UNIFIED_ALL_CATEGORIES = [
     # --- 売上・入金・回収系 ---
@@ -83,14 +82,13 @@ UNIFIED_ALL_CATEGORIES = [
 
 # ==========================================
 # 3. 九門グループ 3社合同 高度自動仕訳マッチングルール
-# （ナインゲイツ、シュガー、SF企画 すべてに共通適用）
 # ==========================================
 AUTO_MATCH_RULES = [
     # 1. 広告宣伝費
     (["タベログ", "tabelog", "indeed", "インディード", "tjhiroshima", "アドプレックス", "facebook ads", "google ads", "広告"], 
      "広告宣伝費", "課対仕入10%", "[販促] 広告宣伝掲載費"),
 
-    # 2. 調査研究費（SF企画 AnimaCast Core IP・ゲーム経済・先端API）
+    # 2. 調査研究費（AnimaCast Core IP・ゲーム経済・先端API）
     (["スクウェア", "スクエニ", "ｽｸｳｴｱ", "square enix", "ドラクエ", "任天堂", "nintendo", "steam", "プレイステーション", "ps store"], 
      "調査研究費（AnimaCast等）", "課対仕入10%", "[研究日報] AnimaCast：ゲーム内経済モデル・リアルタイム決済検証"),
     (["google play", "app store", "[suspicious link removed]", "apple"], 
@@ -146,7 +144,7 @@ AUTO_MATCH_RULES = [
 ]
 
 # ==========================================
-# 4. 法人別 設定マスタ（基本口座・Driveフォルダのみ保持）
+# 4. 法人別 設定マスタ（確定DriveフォルダID同期済）
 # ==========================================
 COMPANY_CONFIG = {
     "ナインゲイツ": {
@@ -205,7 +203,7 @@ os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
 
 # ==========================================
-# 5. Google Drive API 関数
+# 5. Google Drive API 関数（月別フォルダ自動作成・共有ドライブ対応）
 # ==========================================
 def get_drive_service():
     scopes = ['[suspicious link removed]']
@@ -228,6 +226,45 @@ def get_drive_service():
         return build('drive', 'v3', credentials=creds)
     return None
 
+def get_or_create_monthly_folder(service, parent_folder_id, target_month):
+    """親フォルダ内に 'YYYY-MM'（例: '2026-10'）フォルダを検索・自動作成"""
+    try:
+        query = f"'{parent_folder_id}' in parents and name = '{target_month}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        results = service.files().list(
+            q=query, 
+            fields="files(id, name)", 
+            spaces='drive',
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
+        files = results.get('files', [])
+        if files:
+            return files['id']
+
+        folder_metadata = {
+            'name': target_month,
+            'mimeType': 'application/vnd.google-apps.folder',
+            'parents': [parent_folder_id]
+        }
+        folder = service.files().create(
+            body=folder_metadata, 
+            fields='id',
+            supportsAllDrives=True
+        ).execute()
+        return folder.get('id')
+    except Exception as e:
+        return parent_folder_id
+
+def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
+    file_metadata = {'name': file_name, 'parents': [folder_id]}
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
+    return service.files().create(
+        body=file_metadata, 
+        media_body=media, 
+        fields='id, webViewLink',
+        supportsAllDrives=True
+    ).execute()
+
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
@@ -235,7 +272,7 @@ def get_pooled_files(target_dir):
 
 def sync_from_company_drive(folder_id, pool_dir):
     service = get_drive_service()
-    if not service: return False, "Google Drive API認証キーが設定されていません。"
+    if not service: return False, "Google Drive API認証キーが未設定です。"
     if not folder_id: return False, "フォルダIDが未設定です。"
 
     synced_ids = []
@@ -271,16 +308,10 @@ def sync_from_company_drive(folder_id, pool_dir):
     except Exception as e:
         return False, f"同期エラー: {str(e)}"
 
-def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
-    file_metadata = {'name': file_name, 'parents': [folder_id]}
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
-    return service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-
 # ==========================================
 # 6. 超自動仕訳マッチング判定エンジン
 # ==========================================
 def match_intelligent_category(summary_text, is_income):
-    """取引内容・店名から勘定科目・税区分・メモを全自動決定"""
     summary_lower = summary_text.lower()
 
     if is_income:
@@ -288,16 +319,13 @@ def match_intelligent_category(summary_text, is_income):
             return "受取利息", "非課売上", True, "[決算] 預金利息"
         if any(k in summary_lower for k in ["クモン", "九門", "代表", "立替"]):
             return "役員借入金（代表立替・借入）", "対象外", True, "代表立替・役員借入金戻入"
-        # 振込入金・売上回収
         return "売上高", "課税売上10%", True, "売上高・売掛金回収入金"
 
-    # 出金取引の辞書マッチング
     for keywords, category, tax_type, memo in AUTO_MATCH_RULES:
         for kw in keywords:
             if kw.lower() in summary_lower:
                 return category, tax_type, True, memo
 
-    # マッチしなかった場合のデフォルト
     return "雑費", "課対仕入10%", False, ""
 
 def parse_paypay_pdf_intelligent(file_bytes, target_company):
@@ -348,7 +376,6 @@ def parse_paypay_pdf_intelligent(file_bytes, target_company):
                     summary = re.sub(r'[\|\s]+$', '', summary)
                     summary_lower = summary.lower()
 
-                    # 入出金判定
                     is_income = False
                     if len(amounts) >= 2 and amounts == amounts:
                         is_income = True
@@ -489,15 +516,12 @@ def generate_yayoi_csv_for_records(target_records, company_name):
 
         summary_text = f"{base_summary} {' '.join(memo_parts)}".strip()
 
-        # 入金取引 vs 出金取引の貸借振り分け
         if row.get("is_income", False):
-            # 借方：預金（対象外） / 貸方：売上科目
             cols = [
                 "2000", "", "", date_str, bank_subj, bank_sub, "全社", "対象外", amount, "0",
                 target_subj, target_sub, "全社", tax_type, amount, "0", summary_text, "", "", "NO"
             ]
         else:
-            # 借方：費用科目 / 貸方：預金（対象外）
             cols = [
                 "2000", "", "", date_str, target_subj, target_sub, "全社", tax_type, amount, "0",
                 bank_subj, bank_sub, "全社", "対象外", amount, "0", summary_text, "", "", "NO"
@@ -530,14 +554,14 @@ target_company = st.sidebar.selectbox("🏢 処理対象の会社（会計主体
 company_conf = COMPANY_CONFIG[target_company]
 st.sidebar.markdown(f"**標準口座:** `{company_conf['default_payment']}`")
 
-with st.sidebar.expander("🔑 Google Drive API連携キー設定"):
-    custom_token = st.text_area("GOOGLE_TOKEN (JSON文字列)", value="", help="token.jsonの内容を貼り付けるとDrive同期・自動保管が有効化されます。")
+with st.sidebar.expander("🔑 Google Drive API連携キー設定", expanded=False):
+    custom_token = st.text_area("GOOGLE_TOKEN (JSON文字列)", value="", help="token.jsonの内容を貼り付けるとDrive同期・月別自動保管が有効化されます。")
     if custom_token:
         st.session_state.custom_google_token = custom_token
         st.success("APIキーを受領しました")
 
 st.title(f"🏢 九門グループ 統合経理システム（対象: {target_company}）")
-st.caption("【全社共通 網羅科目マスター稼働】広告宣伝費・売掛金・買掛金・外注費・交際費等を完全自動仕分け")
+st.caption("【確定Driveマッピング稼働】月別フォルダ自動振り分け ＆ 3社共通網羅マスター")
 
 main_tab_receipt, main_tab_bank = st.tabs([
     "📑 ① 未処理領収書の管理・プレビュー・登録",
@@ -593,7 +617,6 @@ with main_tab_receipt:
                 rec_date = st.date_input("領収書日付", value=date.today())
                 store_name = st.text_input("支払先・店舗名*", value=os.path.splitext(target_file))
 
-                # 3社完全共通マスターから科目選択
                 sel_cat = st.selectbox("勘定科目（全社共通マスター）", UNIFIED_ALL_CATEGORIES, index=UNIFIED_ALL_CATEGORIES.index("消耗品費"))
                 sel_pay = st.selectbox("決済手段", list(company_conf["payment_mapping"].keys()))
 
@@ -677,7 +700,7 @@ with main_tab_bank:
                 )
 
                 # 【下段・2段目】：業務メモ（幅広） ＋ 確定ボタン
-                col_m1, col_m2 = st.columns([20, 37])
+                col_m1, col_m2 = st.columns()
                 with col_m1:
                     r["research_memo"] = st.text_input(
                         "📝 業務・税務メモ（取引先・打合せ目的・研究内容など）", 
@@ -710,10 +733,13 @@ with main_tab_bank:
         st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
 
         # ----------------------------------------------------
-        # 弥生CSVダウンロード ＆ Google Drive自動配送
+        # 月別フォルダ自動生成 ＆ Drive保管
         # ----------------------------------------------------
         st.markdown("---")
-        st.subheader(f"③ 【{target_company}】弥生仕訳CSV出力 ＆ Drive保管")
+        st.subheader(f"③ 【{target_company}】弥生仕訳CSV出力 ＆ 月別Drive自動保管")
+
+        target_month_str = records["month"] if records else datetime.now().strftime("%Y-%m")
+        st.caption(f"📁 保存先: `{target_company}` 親フォルダID: `{company_conf['output_folder_id']}` ＞ **【 `{target_month_str}` 】サブフォルダ**（自動生成）")
 
         csv_str = generate_yayoi_csv_for_records(records, target_company)
         try: csv_bytes = csv_str.encode("cp932", errors="replace")
@@ -724,26 +750,30 @@ with main_tab_bank:
             st.download_button(
                 label=f"📥 【{target_company}】弥生仕訳CSVをダウンロード ({len(records)}件)",
                 data=csv_bytes,
-                file_name=f"弥生仕訳_{company_conf['code']}_{datetime.now().strftime('%Y%m%d')}.csv",
+                file_name=f"弥生仕訳_{company_conf['code']}_{target_month_str}.csv",
                 mime="text/csv",
                 type="primary",
                 use_container_width=True
             )
 
         with col_d2:
-            if st.button(f"📁 【{target_company}】Google Drive親フォルダへ自動保存", use_container_width=True):
+            if st.button(f"📁 【{target_company}】月別フォルダへ自動保存", use_container_width=True):
                 service = get_drive_service()
                 if not service:
-                    st.warning("⚠️ Google Drive API認証キーが未設定です。左サイドバーで設定するか、左ボタンから直接ダウンロードしてください。")
+                    st.warning("⚠️ Google Drive API認証キーが未設定です。左サイドバーの「🔑 Google Drive API連携キー設定」にトークンを貼り付けてください。")
                 else:
-                    with st.spinner(f"Google Drive（{target_company}フォルダ）へ配送中..."):
+                    with st.spinner(f"Google Drive（{target_company} ＞ {target_month_str} フォルダ）へ自動配送中..."):
                         try:
                             parent_fid = company_conf["output_folder_id"]
+                            target_sub_folder_id = get_or_create_monthly_folder(service, parent_fid, target_month_str)
+                            
                             upload_file_to_drive(
-                                service, parent_fid, 
-                                f"弥生仕訳_{company_conf['code']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", 
-                                csv_bytes, "text/csv"
+                                service, 
+                                target_sub_folder_id, 
+                                f"弥生仕訳_{company_conf['code']}_{target_month_str}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", 
+                                csv_bytes, 
+                                "text/csv"
                             )
-                            st.success(f"🎉 {target_company} のGoogle Driveへ仕訳CSVを安全に自動保管しました！")
+                            st.success(f"🎉 **{target_company}** のGoogle Drive親フォルダ内にある **【 `{target_month_str}` 】フォルダ** へ弥生仕訳CSVを安全に自動保管しました！（@9gates.info メンバー全員と自動共有中）")
                         except Exception as e:
                             st.error(f"Drive配送エラー: {str(e)}")
