@@ -125,7 +125,8 @@ def get_drive_service():
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
-    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f).lower() in valid_exts])
+    # [1] を指定して拡張子文字列を取り出し、正しく lower() を実行
+    return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[1].lower() in valid_exts])
 
 def sync_from_company_drive(folder_id, pool_dir):
     service = get_drive_service()
@@ -183,7 +184,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
     res = service.files().list(q=query, fields="files(id, name)", spaces='drive').execute()
     files = res.get('files', [])
     if files:
-        return files['id']
+        return files[0]['id']
     folder_metadata = {'name': target_month, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
     folder = service.files().create(body=folder_metadata, fields='id').execute()
     return folder.get('id')
@@ -212,7 +213,7 @@ def auto_classify_transaction(company_name, summary_text):
         for kw in keywords:
             if kw.lower() in summary_lower:
                 return category, sub_account, tax_type, auto_memo
-    default_cat = conf["categories"] if conf["categories"] else "雑費"
+    default_cat = conf["categories"][0] if conf["categories"] else "雑費"
     return default_cat, "", "課対仕入10%", auto_memo
 
 def parse_paypay_csv(file_bytes, company_name):
