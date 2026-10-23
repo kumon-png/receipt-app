@@ -21,7 +21,16 @@ USERS = {
 }
 
 # ==========================================
-# 2. 各法人設定・1次読込フォルダ・出力先フォルダ・勘定科目辞書
+# 2. 飲食・会食検知用キーワード（元帳実績）
+# ==========================================
+DINING_KEYWORDS = [
+    "蹄", "野武士", "エスカイヤ", "すし辰", "くら寿司", "スシロー", "なか一", 
+    "アンデルセン", "ふるさと", "焼肉", "寿司", "居酒屋", "バル", "カフェ", 
+    "珈琲", "レストラン", "割烹", "料理", "酒場", "スターバックス", "ドトール"
+]
+
+# ==========================================
+# 3. 各法人設定・1次読込フォルダ・出力先フォルダ・勘定科目辞書
 # ==========================================
 COMPANY_CONFIG = {
     "ナインゲイツ": {
@@ -108,7 +117,7 @@ MASTER_FILE = "vendor_master.xlsx"
 os.makedirs(DEFAULT_POOL_DIR, exist_ok=True)
 
 # ==========================================
-# 3. Google Drive API ＆ 同期・月別フォルダ動的生成関数
+# 4. Google Drive API 関数
 # ==========================================
 def get_drive_service():
     scopes = ['[suspicious link removed]']
@@ -125,7 +134,6 @@ def get_drive_service():
 def get_pooled_files(target_dir):
     if not os.path.exists(target_dir): return []
     valid_exts = [".png", ".jpg", ".jpeg", ".pdf"]
-    # [1] を指定して拡張子文字列を取り出し、正しく lower() を実行
     return sorted([f for f in os.listdir(target_dir) if os.path.splitext(f)[1].lower() in valid_exts])
 
 def sync_from_company_drive(folder_id, pool_dir):
@@ -184,7 +192,7 @@ def get_or_create_monthly_folder(service, parent_folder_id, target_month):
     res = service.files().list(q=query, fields="files(id, name)", spaces='drive').execute()
     files = res.get('files', [])
     if files:
-        return files[0]['id']
+        return files['id']
     folder_metadata = {'name': target_month, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
     folder = service.files().create(body=folder_metadata, fields='id').execute()
     return folder.get('id')
@@ -195,28 +203,10 @@ def upload_file_to_drive(service, folder_id, file_name, file_bytes, mime_type):
     return service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
 
 # ==========================================
-# 4. PayPay明細パース ＆ 自動仕訳エンジン
+# 5. PayPay明細パース ＆ 飲食・研究自動検知
 # ==========================================
-def auto_classify_transaction(company_name, summary_text):
-    conf = COMPANY_CONFIG[company_name]
-    summary_lower = summary_text.lower()
-    auto_memo = ""
-    if company_name == "SF企画":
-        if any(k in summary_lower for k in ["google play", "app store", "apple"]):
-            auto_memo = "[研究日報] AnimaCast：課金API・トークン決済UI検証"
-        elif any(k in summary_lower for k in ["u-next", "netflix", "プライム"]):
-            auto_memo = "[研究日報] 映像配信UI/UXストリーミング検証"
-        elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square"]):
-            auto_memo = "[研究日報] AnimaCast：ゲーム内経済トークン循環調査"
-
-    for keywords, category, sub_account, tax_type in conf.get("keyword_rules", []):
-        for kw in keywords:
-            if kw.lower() in summary_lower:
-                return category, sub_account, tax_type, auto_memo
-    default_cat = conf["categories"][0] if conf["categories"] else "雑費"
-    return default_cat, "", "課対仕入10%", auto_memo
-
 def parse_paypay_csv(file_bytes, company_name):
+    conf = COMPANY_CONFIG[company_name]
     try:
         try:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding="utf-8")
@@ -224,7 +214,7 @@ def parse_paypay_csv(file_bytes, company_name):
             df = pd.read_csv(io.BytesIO(file_bytes), encoding="shift_jis")
         
         records = []
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             row_dict = {str(k).strip(): str(v).strip() for k, v in row.items()}
             date_val = ""
             for c in ["取引日", "日付", "年月日", "取引日時"]:
@@ -248,15 +238,46 @@ def parse_paypay_csv(file_bytes, company_name):
                     break
             
             if date_val and amount != 0:
-                cat, sub_acc, tax_t, memo = auto_classify_transaction(company_name, summary)
+                summary_lower = summary.lower()
+                
+                # 飲食・会食キーワード検知
+                is_dining = any(k.lower() in summary_lower for k in DINING_KEYWORDS)
+                
+                # SF企画向け研究開発日報自動メモ
+                auto_memo = ""
+                if company_name == "SF企画":
+                    if any(k in summary_lower for k in ["google play", "app store", "apple"]):
+                        auto_memo = "[研究日報] AnimaCast：課金API・決済UI検証"
+                    elif any(k in summary_lower for k in ["u-next", "netflix", "プライム"]):
+                        auto_memo = "[研究日報] 映像配信UI/UXストリーミング検証"
+                    elif any(k in summary_lower for k in ["ドラクエ", "任天堂", "steam", "square"]):
+                        auto_memo = "[研究日報] AnimaCast：ゲーム内経済循環調査"
+
+                # 勘定科目の初期推定
+                category = conf["categories"][0] if conf["categories"] else "雑費"
+                sub_account = ""
+                tax_type = "課対仕入10%"
+
+                if is_dining:
+                    category = "交際費" if company_name != "SF企画" else "② 会議費・接待交際費"
+
+                for keywords, cat, sub_acc, t_type in conf.get("keyword_rules", []):
+                    for kw in keywords:
+                        if kw.lower() in summary_lower:
+                            category, sub_account, tax_type = cat, sub_acc, t_type
+                            break
+
                 records.append({
+                    "id": f"rec_{idx}",
                     "date": date_val[:10],
                     "amount": int(amount),
                     "summary": summary,
-                    "category": cat,
-                    "sub_account": sub_acc,
-                    "tax_type": tax_t,
-                    "research_memo": memo
+                    "category": category,
+                    "sub_account": sub_account,
+                    "tax_type": tax_type,
+                    "is_dining": is_dining,
+                    "dining_info": None, # 人数・相手・目的
+                    "research_memo": auto_memo
                 })
         return records
     except Exception as e:
@@ -274,9 +295,16 @@ def generate_yayoi_csv(target_records, company_name):
         tax_type = row.get("tax_type", "課対仕入10%")
         amount = str(abs(row.get("amount", 0)))
         date_str = row.get("date", "").replace("-", "/")
-        base_summary = row.get('paypay_summary', row.get('summary', ''))
-        memo = row.get('research_memo', '') or row.get('entertainment_memo', '')
-        summary_text = f"{base_summary} {memo}".strip()
+        
+        base_summary = row.get('summary', '')
+        memo_parts = []
+        if row.get('research_memo'):
+            memo_parts.append(row['research_memo'])
+        if row.get('dining_info'):
+            d = row['dining_info']
+            memo_parts.append(f"[{d['judged_cat']}] {d['partner']} ({d['people']}名/単価¥{d['unit_price']:,}) 目的:{d['purpose']}")
+            
+        summary_text = f"{base_summary} {' '.join(memo_parts)}".strip()
         
         cols = [
             "2000", "", "", date_str, debit_subj, debit_sub, "全社", tax_type, amount, "0",
@@ -286,7 +314,7 @@ def generate_yayoi_csv(target_records, company_name):
     return "\r\n".join(lines)
 
 # ==========================================
-# 5. Streamlit メイン UI
+# 6. Streamlit メイン UI
 # ==========================================
 st.set_page_config(page_title="九門グループ 統合経理・消込＆Drive自動保管", layout="wide")
 
@@ -301,11 +329,11 @@ current_output_folder_id = company_conf["output_folder_id"]
 st.sidebar.markdown(f"**📂 1次読込フォルダID:**\n`{current_input_folder_id}`")
 st.sidebar.markdown(f"**📁 出力先親フォルダID:**\n`{current_output_folder_id}`")
 
-# ------------------------------------------
-# ☁️ Google ドライブから領収書を同期する（各社連動UI）
-# ------------------------------------------
 st.title(f"🏢 経理自動仕訳・消込・Drive月別保管 ({selected_company})")
 
+# ------------------------------------------
+# ☁️ Google ドライブから領収書を同期する
+# ------------------------------------------
 with st.expander("☁️ Google ドライブから領収書を同期する", expanded=True):
     st.markdown(f"**対象法人: `{selected_company}` の1次読込フォルダ**")
     st.info(f"[suspicious link removed]{current_input_folder_id}")
@@ -327,57 +355,94 @@ with st.expander("☁️ Google ドライブから領収書を同期する", exp
                 else:
                     st.error(msg)
 
-# ------------------------------------------
-# 🍽️ 交際費 / 会議費 自動判別 ＆ メモ入力ツール
-# ------------------------------------------
-with st.expander("🍽️ 【交際費/会議費】自動判別（1人あたり10,000円判定）＆ メモ入力ツール", expanded=False):
-    st.markdown("飲食を伴う支払いは、**1人あたり10,000円以下**であれば全額損金算入の「会議費」に自動判定されます。")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        e_amount = st.number_input("飲食支払金額 (税込・円)", value=18000, step=1000)
-    with c2:
-        e_people = st.number_input("参加人数 (合計)", value=2, min_value=1, step=1)
-    with c3:
-        per_person = int(e_amount / e_people) if e_people > 0 else 0
-        if per_person <= 10000:
-            st.success(f"判定: **会議費（全額損金）**\n1人あたり: ¥{per_person:,} ≦ ¥10,000")
-            judged_category = "会議費"
-        else:
-            st.warning(f"判定: **接待交際費**\n1人あたり: ¥{per_person:,} > ¥10,000")
-            judged_category = "交際費"
-
-    e_partner = st.text_input("相手先企業名 ＆ 参加者氏名")
-    e_purpose = st.text_input("飲食の目的・打合せ内容")
-
-    if st.button("📝 この飲食メモを記憶・登録"):
-        if not e_partner.strip() or not e_purpose.strip():
-            st.error("⚠️ 税務署対策のため「相手先」と「目的」の入力は必須です！")
-        else:
-            st.success(f"✅ バリデーション完了！【{judged_category}】として仕訳メモを生成しました:\n`[{judged_category}] {e_partner} ({e_people}名/単価¥{per_person:,}) 目的:{e_purpose}`")
-
 st.markdown("---")
 
 # ------------------------------------------
-# メイン処理：PayPay明細CSVアップロード ＆ 消込・Drive月別自動保存
+# メイン処理：PayPay明細CSVアップロード ＆ 一括自動仕訳
 # ------------------------------------------
 col_top1, col_top2 = st.columns(2)
 with col_top1:
     target_month = st.text_input("対象年月 (YYYY-MM)", value=datetime.now().strftime("%Y-%m"))
 with col_top2:
-    paypay_csv_file = st.file_uploader("① PayPay銀行 口座明細CSVをアップロード", type=["csv"])
+    paypay_csv_file = st.file_uploader("① PayPay銀行 口座明細CSVをアップロード（一括読込）", type=["csv"])
+
+# セッション状態での取引データ保持
+if "transactions" not in st.session_state or st.session_state.get("last_company") != selected_company:
+    st.session_state.transactions = []
+    st.session_state.last_company = selected_company
 
 if paypay_csv_file:
-    paypay_records = parse_paypay_csv(paypay_csv_file.read(), selected_company)
-    st.info(f"PayPay銀行明細: {len(paypay_records)} 件 読み込み完了（研究日報メモ自動付与済）")
-    
+    # 新規読み込み時のみパース
+    if not st.session_state.transactions:
+        st.session_state.transactions = parse_paypay_csv(paypay_csv_file.read(), selected_company)
+
+if st.session_state.transactions:
+    records = st.session_state.transactions
+    st.info(f"PayPay銀行明細: {len(records)} 件 を一括解析しました。")
+
+    # ----------------------------------------------------
+    # 🍽️ 飲食・会食検知行の自動ポップアップ（要税務メモ入力）
+    # ----------------------------------------------------
+    dining_candidates = [r for r in records if r["is_dining"]]
+    if dining_candidates:
+        st.warning(f"🍽️ **会食・飲食の可能性がある取引が {len(dining_candidates)} 件 検出されました！**\n1人あたり10,000円基準で「会議費」か「交際費」かを自動判定します。税務署監査対策のためメモを入力してください。")
+        
+        for r in dining_candidates:
+            abs_amount = abs(r["amount"])
+            with st.expander(f"📝 【要入力】 {r['date']} | {r['summary']} | ¥{abs_amount:,}", expanded=(r["dining_info"] is None)):
+                c_d1, c_d2 = st.columns([1, 2])
+                with c_d1:
+                    people = st.number_input(f"参加人数 (合計)", min_value=1, value=2, step=1, key=f"p_{r['id']}")
+                    unit_p = int(abs_amount / people)
+                    if unit_p <= 10000:
+                        judged = "会議費"
+                        st.success(f"判定: **会議費（全額損金）**\n単価: ¥{unit_p:,} ≦ ¥10,000")
+                    else:
+                        judged = "交際費"
+                        st.warning(f"判定: **接待交際費**\n単価: ¥{unit_p:,} > ¥10,000")
+                
+                with c_d2:
+                    partner = st.text_input("相手先企業・氏名（例: USEN 山田常務）", key=f"part_{r['id']}")
+                    purpose = st.text_input("飲食の目的（例: ライセンス打合せ）", key=f"purp_{r['id']}")
+                    if st.button("💾 この内容で税務メモを確定", key=f"btn_{r['id']}"):
+                        if not partner.strip() or not purpose.strip():
+                            st.error("税務署対策のため相手先と目的は必須です！")
+                        else:
+                            r["dining_info"] = {
+                                "judged_cat": judged,
+                                "people": people,
+                                "unit_price": unit_p,
+                                "partner": partner,
+                                "purpose": purpose
+                            }
+                            # 判定結果に応じて勘定科目を書き換え
+                            if selected_company == "SF企画":
+                                r["category"] = "② 会議費・接待交際費"
+                            else:
+                                r["category"] = judged
+                            st.success("✅ 税務メモを反映しました！")
+                            st.rerun()
+
     st.subheader("📋 自動仕訳 ＆ 判定結果プレビュー")
-    df_preview = pd.DataFrame(paypay_records)[["date", "amount", "summary", "category", "sub_account", "research_memo"]]
-    st.dataframe(df_preview, use_container_width=True)
+    preview_data = []
+    for r in records:
+        memo_str = r.get("research_memo", "")
+        if r.get("dining_info"):
+            d = r["dining_info"]
+            memo_str = f"[{d['judged_cat']}] {d['partner']} ({d['people']}名/単価¥{d['unit_price']:,})"
+        preview_data.append({
+            "日付": r["date"],
+            "金額": r["amount"],
+            "摘要": r["summary"],
+            "勘定科目": r["category"],
+            "税務メモ": memo_str
+        })
+    st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
 
     st.markdown("---")
     st.subheader(f"📥 弥生仕訳CSV出力 ＆ ④ Google Drive（{selected_company}経理くんデータ）月別自動移動")
 
-    yayoi_csv_str = generate_yayoi_csv(paypay_records, selected_company)
+    yayoi_csv_str = generate_yayoi_csv(records, selected_company)
     try:
         yayoi_bytes = yayoi_csv_str.encode("cp932", errors="replace")
     except Exception:
@@ -420,13 +485,14 @@ if paypay_csv_file:
                             f"対象会社: {selected_company}\n"
                             f"対象年月: {target_month}\n"
                             f"実行日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            f"処理仕訳件数: {len(paypay_records)} 件\n"
+                            f"処理仕訳件数: {len(records)} 件\n"
                             f"月別Driveフォルダへ移動した領収書数: {moved_count} 件\n"
                             f"出力先親フォルダID: {parent_id}\n"
                         )
                         upload_file_to_drive(service, month_folder_id, f"消込実行ログ_{target_month}.txt", log_text.encode("utf-8"), "text/plain")
 
                         st.success(f"🎉 処理完了！\nGoogle Drive『{selected_company}経理くんデータ』内の「{target_month}」フォルダに、仕訳CSV・領収書（{moved_count}件）・消込ログを自動移動・保存しました！")
+                        st.session_state.transactions = [] # リセット
                         st.rerun()
                     except Exception as e:
                         st.error(f"Google Drive保存エラー: {str(e)}")
